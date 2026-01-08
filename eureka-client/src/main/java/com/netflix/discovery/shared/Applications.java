@@ -66,9 +66,37 @@ import com.thoughtworks.xstream.annotations.XStreamImplicit;
 @JsonRootName("applications")
 public class Applications {
     private static class VipIndexSupport {
-        final AbstractQueue<InstanceInfo> instances = new ConcurrentLinkedQueue<>();
+        // Progressive list: emptyList (0) -> singletonList (1) -> ArrayList (2+)
+        // This avoids CLQ and Node allocations. 56% of VIPs have exactly 1 instance.
+        private List<InstanceInfo> instances = Collections.emptyList();
         final AtomicLong roundRobinIndex = new AtomicLong(0);
         final AtomicReference<List<InstanceInfo>> vipList = new AtomicReference<>(Collections.emptyList());
+
+        void addInstance(InstanceInfo info) {
+            int size = instances.size();
+            if (size == 0) {
+                // 0 -> 1: use singletonList (56% of VIPs stop here)
+                instances = Collections.singletonList(info);
+            } else if (size == 1) {
+                // 1 -> 2: transition singletonList to ArrayList
+                InstanceInfo first = instances.get(0);
+                ArrayList<InstanceInfo> list = new ArrayList<>(12);
+                list.add(first);
+                list.add(info);
+                instances = list;
+            } else {
+                // 2+ -> n: append to ArrayList
+                ((ArrayList<InstanceInfo>) instances).add(info);
+            }
+        }
+
+        int instanceCount() {
+            return instances.size();
+        }
+
+        List<InstanceInfo> getInstances() {
+            return instances;
+        }
 
         public AtomicLong getRoundRobinIndex() {
             return roundRobinIndex;
@@ -372,7 +400,7 @@ public class Applications {
         Random shuffleRandom = new Random();
         for (Map.Entry<String, VipIndexSupport> entries : srcMap.entrySet()) {
             VipIndexSupport vipIndexSupport = entries.getValue();
-            AbstractQueue<InstanceInfo> vipInstances = vipIndexSupport.instances;
+            List<InstanceInfo> vipInstances = vipIndexSupport.getInstances();
             final List<InstanceInfo> filteredInstances;
             if (filterUpInstances) {
                 filteredInstances = vipInstances.stream().filter(ii -> ii.getStatus() == InstanceStatus.UP)
@@ -390,16 +418,45 @@ public class Applications {
      * Add the instance to the given map based if the vip address matches with
      * that of the instance. Note that an instance can be mapped to multiple vip
      * addresses.
-     *
      */
     private void addInstanceToMap(InstanceInfo info, String vipAddresses, Map<String, VipIndexSupport> vipMap) {
-        if (vipAddresses != null) {
-            String[] vipAddressArray = vipAddresses.toUpperCase(Locale.ROOT).split(",");
-            for (String vipAddress : vipAddressArray) {
-                VipIndexSupport vis = vipMap.computeIfAbsent(vipAddress, k -> new VipIndexSupport());
-                vis.instances.add(info);
-            }
+        // This code path is quite hot on allocations. We apply common-case optimizations to minimize allocations.
+        // Gathered statistics from a real cluster:
+        // | Metric                | Test   | Prod    |
+        // |-----------------------|--------|---------|
+        // | Total entries         | N      | 2x N    |
+        // | Single VIP (no comma) | 91.1%  | 91.7%   |
+        // | 2 VIPs                | 6.9%   | 5.9%    |
+        // | 3+ VIPs               | 0.4%   | 0.7%    |
+        // | Empty                 | 1.6%   | 1.7%    |
+        // | Max VIPs per entry    | 7      | 13      |
+        // | Avg string length     | 29.5   | 25.8    |
+        // | Max string length     | 204    | 468     |
+
+        if (vipAddresses == null || vipAddresses.isEmpty()) {
+            return;
         }
+
+        String upper = vipAddresses.toUpperCase(Locale.ROOT);
+
+        // Fast path (91.7% of cases) single VIP: no split() -> byte[], no substring() -> String
+        int commaIndex = upper.indexOf(',');
+        if (commaIndex == -1) {
+            vipMap.computeIfAbsent(upper, k -> new VipIndexSupport()).addInstance(info);
+            return;
+        }
+
+        // Multiple VIPs: uppercase once, then parse without split() byte[] allocation
+        int start = 0;
+        do {
+            String vipAddress = upper.substring(start, commaIndex);
+            vipMap.computeIfAbsent(vipAddress, k -> new VipIndexSupport()).addInstance(info);
+            start = commaIndex + 1;
+        } while ((commaIndex = upper.indexOf(',', start)) != -1);
+
+        // Last segment
+        String vipAddress = upper.substring(start);
+        vipMap.computeIfAbsent(vipAddress, k -> new VipIndexSupport()).addInstance(info);
     }
 
     /**

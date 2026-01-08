@@ -207,11 +207,12 @@ public class DeserializerStringCache implements Function<String, String> {
      * 
      * @param jp
      * @param cacheScope
+     * @param transform optional transform function applied to the parser text on cache miss
      * @return a possibly interned String
      * @throws IOException
      */
-    public String apply(final JsonParser jp, CacheScope cacheScope, Supplier<String> source) throws IOException {
-        parserLookupBuffer.reset(jp, source);
+    public String apply(final JsonParser jp, CacheScope cacheScope, Function<JsonParser, String> transform) throws IOException {
+        parserLookupBuffer.reset(jp, transform);
         int keyLength = parserLookupBuffer.length();
         if (lengthLimit < 0 || keyLength <= lengthLimit) {
             Map<CharBuffer, String> cache = (cacheScope == CacheScope.GLOBAL_SCOPE) ? globalCache : applicationCache;
@@ -360,14 +361,16 @@ public class DeserializerStringCache implements Function<String, String> {
      * Reset before each use to avoid allocations on cache hits.
      */
     private static class MutableArrayCharBuffer implements CharBuffer {
+        private JsonParser jp;
         private char[] source;
         private int offset;
         private int length;
-        private Supplier<String> valueTransform;
+        private Function<JsonParser, String> valueTransform;
         private int variant;
         private int hash;
 
-        void reset(JsonParser jp, Supplier<String> valueTransform) throws IOException {
+        void reset(JsonParser jp, Function<JsonParser, String> valueTransform) throws IOException {
+            this.jp = jp;
             this.source = jp.getTextCharacters();
             this.offset = jp.getTextOffset();
             this.length = jp.getTextLength();
@@ -428,13 +431,13 @@ public class DeserializerStringCache implements Function<String, String> {
 
         @Override
         public String toString() {
-            return valueTransform == null ? new String(this.source, offset, length) : valueTransform.get();
+            return valueTransform == null ? new String(this.source, offset, length) : valueTransform.apply(jp);
         }
 
         @Override
         public String consume(BiConsumer<CharBuffer, String> valueConsumer) {
             String key = new String(this.source, offset, length);
-            String value = valueTransform == null ? key : valueTransform.get();
+            String value = valueTransform == null ? key : valueTransform.apply(jp);
             valueConsumer.accept(new CharBuffer.StringCharBuffer(key, variant), value);
             return value;
         }

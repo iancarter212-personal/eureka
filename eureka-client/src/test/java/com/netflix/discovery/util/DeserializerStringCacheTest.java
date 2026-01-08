@@ -3,7 +3,7 @@ package com.netflix.discovery.util;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Supplier;
+import java.util.function.Function;
 
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
@@ -42,7 +42,7 @@ public class DeserializerStringCacheTest {
         assertThat(lowerCaseValue, is("value"));
 
         try (JsonParser jsonParser = createParser("value")) {
-            String upperCaseValue = cache.apply(jsonParser, CacheScope.APPLICATION_SCOPE, () -> "VALUE");
+            String upperCaseValue = cache.apply(jsonParser, CacheScope.APPLICATION_SCOPE, jp -> "VALUE");
             assertThat(upperCaseValue, is("VALUE"));
         }
     }
@@ -60,7 +60,7 @@ public class DeserializerStringCacheTest {
             String expectedValue = new String(expectedValueChars);
 
             String upperCaseValue = cache.apply(jsonParser, CacheScope.APPLICATION_SCOPE,
-                    () -> longString.toUpperCase());
+                    jp -> longString.toUpperCase());
             assertThat(upperCaseValue, is(expectedValue));
         }
     }
@@ -106,23 +106,23 @@ public class DeserializerStringCacheTest {
     }
 
     @Test
-    public void testSupplierOnlyCalledOnCacheMiss() throws IOException {
+    public void testTransformOnlyCalledOnCacheMiss() throws IOException {
         DeserializerStringCache cache = createCache();
         AtomicInteger callCount = new AtomicInteger(0);
 
-        Supplier<String> countingSupplier = () -> {
+        Function<JsonParser, String> countingTransform = jp -> {
             callCount.incrementAndGet();
             return "TRANSFORMED";
         };
 
         try (JsonParser p1 = createParser("value")) {
-            cache.apply(p1, CacheScope.APPLICATION_SCOPE, countingSupplier);
+            cache.apply(p1, CacheScope.APPLICATION_SCOPE, countingTransform);
         }
         try (JsonParser p2 = createParser("value")) {
-            cache.apply(p2, CacheScope.APPLICATION_SCOPE, countingSupplier);
+            cache.apply(p2, CacheScope.APPLICATION_SCOPE, countingTransform);
         }
 
-        assertEquals("Supplier should only be called once (on cache miss)", 1, callCount.get());
+        assertEquals("Transform should only be called once (on cache miss)", 1, callCount.get());
     }
 
     @Test
@@ -222,15 +222,15 @@ public class DeserializerStringCacheTest {
             lowercase = cache.apply(p1, CacheScope.APPLICATION_SCOPE);
         }
 
-        // Use a different supplier class - this should create a different cache entry
-        // because the variant is based on the supplier class identity
-        class UpperCaseSupplier implements Supplier<String> {
-            public String get() { return "APP"; }
+        // Use a different function class - this should create a different cache entry
+        // because the variant is based on the function class identity
+        class UpperCaseTransform implements Function<JsonParser, String> {
+            public String apply(JsonParser jp) { return "APP"; }
         }
 
         String uppercase;
         try (JsonParser p2 = createParser("app")) {
-            uppercase = cache.apply(p2, CacheScope.APPLICATION_SCOPE, new UpperCaseSupplier());
+            uppercase = cache.apply(p2, CacheScope.APPLICATION_SCOPE, new UpperCaseTransform());
         }
 
         assertEquals("Lowercase should be 'app'", "app", lowercase);

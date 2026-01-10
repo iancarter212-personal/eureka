@@ -408,41 +408,63 @@ public class Applications {
      * Shuffle and filter instances for a single VIP.
      */
     private void shuffleAndFilterInstances(VipIndexSupport vipIndexSupport, boolean filterUpInstances, Random shuffleRandom) {
-        // Statistics from prod: 56% of VIPs have exactly 1 instance, 82% have <=3 instances.
-        // Optimized to avoid allocations for 0/1 instance cases.
-        List<InstanceInfo> vipInstances = vipIndexSupport.getInstances();
-        int size = vipInstances.size();
+        List<InstanceInfo> instances = vipIndexSupport.getInstances();
+        int size = instances.size();
 
-        final List<InstanceInfo> filteredInstances;
+        // Empty: nothing to do
         if (size == 0) {
-            // Empty: reuse existing emptyList
-            filteredInstances = vipInstances;
-        } else if (size == 1) {
-            // Single instance (56% of VIPs): no shuffle needed, reuse list if possible
-            InstanceInfo instance = vipInstances.get(0);
-            if (filterUpInstances && instance.getStatus() != InstanceStatus.UP) {
-                filteredInstances = Collections.emptyList();
-            } else {
-                filteredInstances = vipInstances;
-            }
-        } else {
-            // Multiple instances: filter with loop (avoids stream allocations) and shuffle
-            ArrayList<InstanceInfo> list = new ArrayList<>(size);
-            if (filterUpInstances) {
-                for (int i = 0; i < size; i++) {
-                    InstanceInfo instance = vipInstances.get(i);
-                    if (instance.getStatus() == InstanceStatus.UP) {
-                        list.add(instance);
-                    }
-                }
-            } else {
-                list.addAll(vipInstances);
-            }
-            Collections.shuffle(list, shuffleRandom);
-            filteredInstances = list;
+            vipIndexSupport.setVipList(instances);
+            return;
         }
-        vipIndexSupport.setVipList(filteredInstances);
-        vipIndexSupport.roundRobinIndex.set(0);
+
+        // Single instance: no shuffle needed, check status if filtering
+        if (size == 1) {
+            InstanceInfo instance = instances.get(0);
+            boolean keep = !filterUpInstances || instance.getStatus() == InstanceStatus.UP;
+            vipIndexSupport.setVipList(keep ? instances : Collections.emptyList());
+            return;
+        }
+
+        // Multiple instances (2+): instances is always an ArrayList at this point
+        ArrayList<InstanceInfo> list = (ArrayList<InstanceInfo>) instances;
+
+        // Filter in place if needed (no-op when all instances are UP)
+        if (filterUpInstances) {
+            filterToUpInstancesInPlace(list);
+            if (list.isEmpty()) {
+                vipIndexSupport.setVipList(Collections.emptyList());
+                return;
+            }
+        }
+
+        // Shuffle in place and reuse
+        Collections.shuffle(list, shuffleRandom);
+        vipIndexSupport.setVipList(list);
+    }
+
+    /**
+     * Filter list in place to keep only UP instances. Allocation-free.
+     */
+    private static void filterToUpInstancesInPlace(ArrayList<InstanceInfo> list) {
+        int size = list.size();
+        int writeIndex = 0;
+        // shift forward all of the UP instances
+        for (int i = 0; i < size; i++) {
+            InstanceInfo instance = list.get(i);
+            if (instance.getStatus() == InstanceStatus.UP) {
+                if (writeIndex != i) {
+                    list.set(writeIndex, instance);
+                }
+                writeIndex++;
+            }
+        }
+        // Truncate: remove tail elements. Allows old objects to be GCd.
+        // Array is not shrunk back, but, in the majority case this is not useful.
+        // More important that we clear the entries so the InstanceInfo elements
+        // can be released.
+        if (writeIndex < size) {
+            list.subList(writeIndex, size).clear();
+        }
     }
 
     /**

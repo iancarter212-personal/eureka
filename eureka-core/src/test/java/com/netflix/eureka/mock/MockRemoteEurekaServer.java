@@ -100,6 +100,7 @@ public class MockRemoteEurekaServer extends ExternalResource {
 
             if (simulateNotReady) {
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                baseRequest.setHandled(true);
                 return;
             }
             String authName = request.getHeader(AbstractEurekaIdentity.AUTH_NAME_HEADER_KEY);

@@ -1,9 +1,11 @@
 package com.netflix.eureka.mock;
 
+import javax.servlet.FilterChain;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.util.Collections;
 import java.util.Map;
 
 import com.netflix.appinfo.AbstractEurekaIdentity;
@@ -32,6 +34,8 @@ public class MockRemoteEurekaServer extends ExternalResource {
     private final Map<String, Application> applicationMap;
     private final Map<String, Application> applicationDeltaMap;
     private final Server server;
+    private final ServerRequestAuthFilter authFilter;
+    private final RateLimitingFilter rateLimitingFilter;
     private boolean sentDelta;
     private int port;
     private volatile boolean simulateNotReady;
@@ -40,6 +44,21 @@ public class MockRemoteEurekaServer extends ExternalResource {
                                   Map<String, Application> applicationDeltaMap) {
         this.applicationMap = applicationMap;
         this.applicationDeltaMap = applicationDeltaMap;
+
+        EurekaServerConfig mockServerConfig = mock(EurekaServerConfig.class);
+        when(mockServerConfig.shouldLogIdentityHeaders()).thenReturn(true);
+        when(mockServerConfig.isRateLimiterEnabled()).thenReturn(false);
+        when(mockServerConfig.isRateLimiterThrottleStandardClients()).thenReturn(false);
+        when(mockServerConfig.getRateLimiterPrivilegedClients()).thenReturn(Collections.emptySet());
+        when(mockServerConfig.getRateLimiterBurstSize()).thenReturn(10);
+        when(mockServerConfig.getRateLimiterRegistryFetchAverageRate()).thenReturn(10);
+        when(mockServerConfig.getRateLimiterFullFetchAverageRate()).thenReturn(10);
+        EurekaServerContext mockServerContext = mock(EurekaServerContext.class);
+        when(mockServerContext.getServerConfig()).thenReturn(mockServerConfig);
+
+        this.authFilter = new ServerRequestAuthFilter(mockServerContext);
+        this.rateLimitingFilter = new RateLimitingFilter(mockServerContext);
+
         server = new Server(port);
         server.setHandler(new AppsResourceHandler());
         System.out.println(String.format(
@@ -97,6 +116,15 @@ public class MockRemoteEurekaServer extends ExternalResource {
         @Override
         public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response)
                 throws IOException, ServletException {
+            FilterChain handlerLogic = (req, res) ->
+                    handleRequest(target, baseRequest, (HttpServletRequest) req, (HttpServletResponse) res);
+            FilterChain withRateLimit = (req, res) ->
+                    rateLimitingFilter.doFilter(req, res, handlerLogic);
+            authFilter.doFilter(request, response, withRateLimit);
+        }
+
+        private void handleRequest(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response)
+                throws IOException, ServletException {
 
             if (simulateNotReady) {
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
@@ -114,10 +142,6 @@ public class MockRemoteEurekaServer extends ExternalResource {
             Assert.assertTrue(!authName.equals(ServerRequestAuthFilter.UNKNOWN));
             Assert.assertTrue(!authVersion.equals(ServerRequestAuthFilter.UNKNOWN));
             Assert.assertTrue(!authId.equals(ServerRequestAuthFilter.UNKNOWN));
-
-            // Filter execution removed during Jetty 9 migration — filters are no longer
-            // directly accessible from AbstractHandler. The auth/rate-limit assertions
-            // above still validate header presence.
 
             String pathInfo = request.getPathInfo();
             System.out.println(

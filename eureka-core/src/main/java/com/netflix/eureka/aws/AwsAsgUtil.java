@@ -31,6 +31,8 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+import com.netflix.discovery.util.VirtualThreadSupport;
+
 import javax.inject.Inject;
 import javax.inject.Singleton;
 
@@ -90,16 +92,18 @@ public class AwsAsgUtil implements AsgClient {
 
     private Map<String, Credentials> stsCredentials = new HashMap<>();
 
-    private final ExecutorService cacheReloadExecutor = new ThreadPoolExecutor(
-            1, 10, 60, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(),
-            new ThreadFactory() {
-                @Override
-                public Thread newThread(Runnable r) {
-                    Thread thread = new Thread(r, "Eureka-AWS-isASGEnabled");
-                    thread.setDaemon(true);
-                    return thread;
-                }
-    });
+    private final ExecutorService cacheReloadExecutor = VirtualThreadSupport.isEnabled()
+            ? java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()
+            : new ThreadPoolExecutor(
+                    1, 10, 60, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(),
+                    new ThreadFactory() {
+                        @Override
+                        public Thread newThread(Runnable r) {
+                            Thread thread = new Thread(r, "Eureka-AWS-isASGEnabled");
+                            thread.setDaemon(true);
+                            return thread;
+                        }
+            });
 
     private ListeningExecutorService listeningCacheReloadExecutor = MoreExecutors.listeningDecorator(cacheReloadExecutor);
 

@@ -1,12 +1,13 @@
 package com.netflix.discovery;
 
 import java.util.TimerTask;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.netflix.servo.monitor.Counter;
@@ -33,14 +34,17 @@ public class TimedSupervisorTask extends TimerTask {
 
     private final String name;
     private final ScheduledExecutorService scheduler;
-    private final ThreadPoolExecutor executor;
+    private final ExecutorService executor;
     private final long timeoutMillis;
     private final Runnable task;
 
     private final AtomicLong delay;
     private final long maxDelay;
 
-    public TimedSupervisorTask(String name, ScheduledExecutorService scheduler, ThreadPoolExecutor executor,
+    // Tracks active tasks submitted to the executor, replacing ThreadPoolExecutor.getActiveCount()
+    private final AtomicInteger activeTaskCount = new AtomicInteger();
+
+    public TimedSupervisorTask(String name, ScheduledExecutorService scheduler, ExecutorService executor,
                                int timeout, TimeUnit timeUnit, int expBackOffBound, Runnable task) {
         this.name = name;
         this.scheduler = scheduler;
@@ -63,11 +67,18 @@ public class TimedSupervisorTask extends TimerTask {
     public void run() {
         Future<?> future = null;
         try {
-            future = executor.submit(task);
-            threadPoolLevelGauge.set((long) executor.getActiveCount());
+            future = executor.submit(() -> {
+                activeTaskCount.incrementAndGet();
+                try {
+                    task.run();
+                } finally {
+                    activeTaskCount.decrementAndGet();
+                }
+            });
+            threadPoolLevelGauge.set((long) activeTaskCount.get());
             future.get(timeoutMillis, TimeUnit.MILLISECONDS);  // block until done or timeout
             delay.set(timeoutMillis);
-            threadPoolLevelGauge.set((long) executor.getActiveCount());
+            threadPoolLevelGauge.set((long) activeTaskCount.get());
             successCounter.increment();
         } catch (TimeoutException e) {
             logger.warn("task supervisor timed out", e);

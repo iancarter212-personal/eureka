@@ -30,6 +30,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.SynchronousQueue;
@@ -154,8 +155,8 @@ public class DiscoveryClient implements EurekaClient {
      */
     private final ScheduledExecutorService scheduler;
     // additional executors for supervised subtasks
-    private final ThreadPoolExecutor heartbeatExecutor;
-    private final ThreadPoolExecutor cacheRefreshExecutor;
+    private final ExecutorService heartbeatExecutor;
+    private final ExecutorService cacheRefreshExecutor;
 
     private TimedSupervisorTask cacheRefreshTask;
     private TimedSupervisorTask heartbeatTask;
@@ -411,23 +412,28 @@ public class DiscoveryClient implements EurekaClient {
                             .setDaemon(true)
                             .build());
 
-            heartbeatExecutor = new ThreadPoolExecutor(
-                    1, clientConfig.getHeartbeatExecutorThreadPoolSize(), 0, TimeUnit.SECONDS,
-                    new SynchronousQueue<Runnable>(),
-                    new ThreadFactoryBuilder()
-                            .setNameFormat("DiscoveryClient-HeartbeatExecutor-%d")
-                            .setDaemon(true)
-                            .build()
-            );  // use direct handoff
+            if (com.netflix.discovery.util.VirtualThreadSupport.isEnabled()) {
+                heartbeatExecutor = Executors.newVirtualThreadPerTaskExecutor();
+                cacheRefreshExecutor = Executors.newVirtualThreadPerTaskExecutor();
+            } else {
+                heartbeatExecutor = new ThreadPoolExecutor(
+                        1, clientConfig.getHeartbeatExecutorThreadPoolSize(), 0, TimeUnit.SECONDS,
+                        new SynchronousQueue<Runnable>(),
+                        new ThreadFactoryBuilder()
+                                .setNameFormat("DiscoveryClient-HeartbeatExecutor-%d")
+                                .setDaemon(true)
+                                .build()
+                );  // use direct handoff
 
-            cacheRefreshExecutor = new ThreadPoolExecutor(
-                    1, clientConfig.getCacheRefreshExecutorThreadPoolSize(), 0, TimeUnit.SECONDS,
-                    new SynchronousQueue<Runnable>(),
-                    new ThreadFactoryBuilder()
-                            .setNameFormat("DiscoveryClient-CacheRefreshExecutor-%d")
-                            .setDaemon(true)
-                            .build()
-            );  // use direct handoff
+                cacheRefreshExecutor = new ThreadPoolExecutor(
+                        1, clientConfig.getCacheRefreshExecutorThreadPoolSize(), 0, TimeUnit.SECONDS,
+                        new SynchronousQueue<Runnable>(),
+                        new ThreadFactoryBuilder()
+                                .setNameFormat("DiscoveryClient-CacheRefreshExecutor-%d")
+                                .setDaemon(true)
+                                .build()
+                );  // use direct handoff
+            }
 
             eurekaTransport = new EurekaTransport();
             scheduleServerEndpointTask(eurekaTransport, args);

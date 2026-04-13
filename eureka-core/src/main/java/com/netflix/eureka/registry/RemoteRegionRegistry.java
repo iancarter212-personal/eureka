@@ -23,6 +23,7 @@ import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.SynchronousQueue;
@@ -39,6 +40,7 @@ import com.netflix.appinfo.InstanceInfo.ActionType;
 import com.netflix.discovery.EurekaClientConfig;
 import com.netflix.discovery.EurekaIdentityHeaderFilter;
 import com.netflix.discovery.TimedSupervisorTask;
+import com.netflix.discovery.util.VirtualThreadSupport;
 import com.netflix.discovery.shared.Application;
 import com.netflix.discovery.shared.Applications;
 import com.netflix.discovery.shared.LookupService;
@@ -187,8 +189,11 @@ public class RemoteRegionRegistry implements LookupService<String> {
             }
         };
 
-        ThreadPoolExecutor remoteRegionFetchExecutor = new ThreadPoolExecutor(
-                1, serverConfig.getRemoteRegionFetchThreadPoolSize(), 0, TimeUnit.SECONDS, new SynchronousQueue<Runnable>());  // use direct handoff
+        ExecutorService remoteRegionFetchExecutor = VirtualThreadSupport.isEnabled()
+                ? Executors.newVirtualThreadPerTaskExecutor()
+                : new ThreadPoolExecutor(
+                        1, serverConfig.getRemoteRegionFetchThreadPoolSize(), 0, TimeUnit.SECONDS,
+                        new SynchronousQueue<Runnable>());  // use direct handoff
 
         scheduler = Executors.newScheduledThreadPool(1,
                 new ThreadFactoryBuilder()

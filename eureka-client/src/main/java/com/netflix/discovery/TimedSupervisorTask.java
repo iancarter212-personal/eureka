@@ -67,14 +67,8 @@ public class TimedSupervisorTask extends TimerTask {
     public void run() {
         Future<?> future = null;
         try {
-            future = executor.submit(() -> {
-                activeTaskCount.incrementAndGet();
-                try {
-                    task.run();
-                } finally {
-                    activeTaskCount.decrementAndGet();
-                }
-            });
+            activeTaskCount.incrementAndGet();
+            future = executor.submit(task);
             threadPoolLevelGauge.set((long) activeTaskCount.get());
             future.get(timeoutMillis, TimeUnit.MILLISECONDS);  // block until done or timeout
             delay.set(timeoutMillis);
@@ -105,6 +99,7 @@ public class TimedSupervisorTask extends TimerTask {
 
             throwableCounter.increment();
         } finally {
+            activeTaskCount.decrementAndGet();
             if (future != null) {
                 future.cancel(true);
             }

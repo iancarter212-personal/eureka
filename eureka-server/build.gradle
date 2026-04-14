@@ -6,7 +6,7 @@ dependencies {
     api "com.sun.jersey:jersey-server:$jerseyVersion"
     api "com.sun.jersey:jersey-servlet:$jerseyVersion"
     api "org.slf4j:slf4j-reload4j:${slf4jVersion}"
-    api 'org.glassfish.jaxb:jaxb-runtime:2.3.3'
+    api 'org.glassfish.jaxb:jaxb-runtime:2.3.9'
 
     runtimeOnly 'xerces:xercesImpl:2.12.2'
     runtimeOnly "org.codehaus.jettison:jettison:${jettisonVersion}"

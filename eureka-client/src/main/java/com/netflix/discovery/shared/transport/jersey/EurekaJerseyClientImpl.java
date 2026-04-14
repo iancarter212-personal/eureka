@@ -263,7 +263,7 @@ public class EurekaJerseyClientImpl implements EurekaJerseyClient {
                     }
                     
                     if (hostnameVerifier == null) {
-                        hostnameVerifier = SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER;
+                        hostnameVerifier = SSLSocketFactory.STRICT_HOSTNAME_VERIFIER;
                     }
                     
                     SSLConnectionSocketFactory customSslSocketFactory = new SSLConnectionSocketFactory(sslContext, hostnameVerifier);

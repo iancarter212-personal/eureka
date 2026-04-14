@@ -22,11 +22,13 @@ allprojects {
         githubProjectName = 'eureka'
 
         awsVersion = '1.12.782'
-        servletVersion = '2.5'
+        servletVersion = '4.0.1'
+        jersey2Version = '2.41'
         jerseyVersion = '1.19.4'
         jettisonVersion = '1.5.4'
         apacheHttpClientVersion = '4.5.14'
         commonsConfigurationVersion = '1.10'
+        slf4jVersion = '2.0.16'
         jsr305Version = '3.0.2'
         guiceVersion = '5.1.0'
         servoVersion = '0.12.21'
@@ -38,7 +40,7 @@ allprojects {
         javaxAnnotationVersion = '1.3.2'
 
         // test deps
-        jetty_version = '9.4.57.v20241219'
+        jetty_version = '10.0.24'
         junit_version = '4.13.2'
         mockitoVersion = '5.15.2'
         mockserverVersion = '5.15.0'
@@ -63,18 +65,17 @@ subprojects {
         // setting this property prevents java from grabbing focus when running the tests under osx
         systemProperty 'java.awt.headless', 'true'
 
-        // Java 21 strong encapsulation: open internal modules for reflection-based libraries
+        // Java 21 strong encapsulation: open internal modules for reflection-based test libraries
+        // (Mockito, XStream, Archaius use deep reflection on core JDK types)
         jvmArgs [
-            '--add-opens', 'java.base/java.lang=ALL-UNNAMED',
-            '--add-opens', 'java.base/java.lang.reflect=ALL-UNNAMED',
-            '--add-opens', 'java.base/java.util=ALL-UNNAMED',
-            '--add-opens', 'java.base/java.util.concurrent=ALL-UNNAMED',
-            '--add-opens', 'java.base/java.net=ALL-UNNAMED',
-            '--add-opens', 'java.base/java.io=ALL-UNNAMED',
-            '--add-opens', 'java.base/java.math=ALL-UNNAMED',
-            '--add-opens', 'java.base/java.text=ALL-UNNAMED',
-            '--add-opens', 'java.base/sun.security.ssl=ALL-UNNAMED',
-            '--add-opens', 'java.base/sun.net.www.protocol.https=ALL-UNNAMED',
+            '--add-opens', 'java.base/java.lang=ALL-UNNAMED',           // Mockito / byte-buddy
+            '--add-opens', 'java.base/java.lang.reflect=ALL-UNNAMED',   // Mockito proxy creation
+            '--add-opens', 'java.base/java.util=ALL-UNNAMED',           // XStream serialization
+            '--add-opens', 'java.base/java.util.concurrent=ALL-UNNAMED',// Archaius config
+            '--add-opens', 'java.base/java.net=ALL-UNNAMED',            // HTTP client internals
+            '--add-opens', 'java.base/java.io=ALL-UNNAMED',             // XStream I/O
+            '--add-opens', 'java.base/java.math=ALL-UNNAMED',           // XStream number handling
+            '--add-opens', 'java.base/java.text=ALL-UNNAMED',           // XStream date handling
         ]
     }
 

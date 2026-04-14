@@ -9,9 +9,9 @@ dependencies {
     api "com.sun.jersey:jersey-server:${jerseyVersion}"
     api "com.sun.jersey:jersey-servlet:${jerseyVersion}"
     api "com.sun.jersey.contribs:jersey-guice:${jerseyVersion}"
-    api 'org.slf4j:slf4j-log4j12:1.6.1'
+    api "org.slf4j:slf4j-reload4j:${slf4jVersion}"
     runtimeOnly "org.codehaus.jettison:jettison:${jettisonVersion}"
-    compileOnly "javax.servlet:servlet-api:${servletVersion}"
+    compileOnly "javax.servlet:javax.servlet-api:${servletVersion}"
 
     testImplementation project(':eureka-test-utils')
     testImplementation "org.mockito:mockito-core:${mockitoVersion}"

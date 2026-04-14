@@ -5,6 +5,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -41,7 +42,8 @@ public class TimedSupervisorTask extends TimerTask {
     private final AtomicLong delay;
     private final long maxDelay;
 
-    // Tracks active tasks submitted to the executor, replacing ThreadPoolExecutor.getActiveCount()
+    // Tracks in-flight tasks for non-ThreadPoolExecutor implementations (e.g. virtual thread executors).
+    // When the executor is a ThreadPoolExecutor, we delegate to getActiveCount() for exact semantics.
     private final AtomicInteger activeTaskCount = new AtomicInteger();
 
     public TimedSupervisorTask(String name, ScheduledExecutorService scheduler, ExecutorService executor,
@@ -69,7 +71,7 @@ public class TimedSupervisorTask extends TimerTask {
         try {
             activeTaskCount.incrementAndGet();
             future = executor.submit(task);
-            threadPoolLevelGauge.set((long) activeTaskCount.get());
+            threadPoolLevelGauge.set(getActiveCount());
             future.get(timeoutMillis, TimeUnit.MILLISECONDS);  // block until done or timeout
             delay.set(timeoutMillis);
             successCounter.increment();
@@ -99,7 +101,7 @@ public class TimedSupervisorTask extends TimerTask {
             throwableCounter.increment();
         } finally {
             activeTaskCount.decrementAndGet();
-            threadPoolLevelGauge.set((long) activeTaskCount.get());
+            threadPoolLevelGauge.set(getActiveCount());
             if (future != null) {
                 future.cancel(true);
             }
@@ -108,6 +110,18 @@ public class TimedSupervisorTask extends TimerTask {
                 scheduler.schedule(this, delay.get(), TimeUnit.MILLISECONDS);
             }
         }
+    }
+
+    /**
+     * Returns the number of active tasks. Delegates to {@link ThreadPoolExecutor#getActiveCount()}
+     * when the executor is a ThreadPoolExecutor (exact semantics); falls back to the AtomicInteger
+     * counter for other implementations (e.g. virtual thread executors).
+     */
+    private long getActiveCount() {
+        if (executor instanceof ThreadPoolExecutor) {
+            return ((ThreadPoolExecutor) executor).getActiveCount();
+        }
+        return activeTaskCount.get();
     }
 
     @Override

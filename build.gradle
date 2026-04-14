@@ -22,23 +22,23 @@ allprojects {
         githubProjectName = 'eureka'
 
         awsVersion = '1.12.782'
-        servletVersion = '2.5'
+        servletVersion = '3.1.0'
         jerseyVersion = '1.19.4'
         jettisonVersion = '1.5.4'
         apacheHttpClientVersion = '4.5.14'
         commonsConfigurationVersion = '1.10'
         jsr305Version = '3.0.2'
         guiceVersion = '5.1.0'
-        servoVersion = '0.12.21'
-        governatorVersion = '1.17.5'
-        archaiusVersion = '0.7.7'
+        servoVersion = '0.13.2'
+        governatorVersion = '1.17.13'
+        archaiusVersion = '0.7.12'
         jacksonVersion = '2.18.3'
         jacksonDatabindVersion = '2.18.3'
         woodstoxVersion = '7.1.0'
         javaxAnnotationVersion = '1.3.2'
 
         // test deps
-        jetty_version = '9.4.57.v20241219'
+        jetty_version = '10.0.24'
         junit_version = '4.13.2'
         mockitoVersion = '5.15.2'
         mockserverVersion = '5.15.0'
@@ -82,5 +82,21 @@ subprojects {
         manifest {
             attributes('Build-Time-ISO-8601': java.time.OffsetDateTime.now().format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME))
         }
+    }
+
+    // Java 21 strong encapsulation: open internal modules for all JavaExec tasks (runtime, examples, etc.)
+    tasks.withType(JavaExec).configureEach {
+        jvmArgs([
+            '--add-opens', 'java.base/java.lang=ALL-UNNAMED',
+            '--add-opens', 'java.base/java.lang.reflect=ALL-UNNAMED',
+            '--add-opens', 'java.base/java.util=ALL-UNNAMED',
+            '--add-opens', 'java.base/java.util.concurrent=ALL-UNNAMED',
+            '--add-opens', 'java.base/java.net=ALL-UNNAMED',
+            '--add-opens', 'java.base/java.io=ALL-UNNAMED',
+            '--add-opens', 'java.base/java.math=ALL-UNNAMED',
+            '--add-opens', 'java.base/java.text=ALL-UNNAMED',
+            '--add-opens', 'java.base/sun.security.ssl=ALL-UNNAMED',
+            '--add-opens', 'java.base/sun.net.www.protocol.https=ALL-UNNAMED',
+        ])
     }
 }

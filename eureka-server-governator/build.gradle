@@ -9,9 +9,9 @@ dependencies {
     api "com.sun.jersey:jersey-server:${jerseyVersion}"
     api "com.sun.jersey:jersey-servlet:${jerseyVersion}"
     api "com.sun.jersey.contribs:jersey-guice:${jerseyVersion}"
-    api 'org.slf4j:slf4j-log4j12:1.6.1'
+    api 'org.slf4j:slf4j-log4j12:1.7.36'
     runtimeOnly "org.codehaus.jettison:jettison:${jettisonVersion}"
-    compileOnly "javax.servlet:servlet-api:${servletVersion}"
+    compileOnly "javax.servlet:javax.servlet-api:${servletVersion}"
 
     testImplementation project(':eureka-test-utils')
     testImplementation "org.mockito:mockito-core:${mockitoVersion}"
@@ -31,4 +31,16 @@ war {
 
 gretty {
     contextPath 'eureka'
+    jvmArgs = [
+        '--add-opens', 'java.base/java.lang=ALL-UNNAMED',
+        '--add-opens', 'java.base/java.lang.reflect=ALL-UNNAMED',
+        '--add-opens', 'java.base/java.util=ALL-UNNAMED',
+        '--add-opens', 'java.base/java.util.concurrent=ALL-UNNAMED',
+        '--add-opens', 'java.base/java.net=ALL-UNNAMED',
+        '--add-opens', 'java.base/java.io=ALL-UNNAMED',
+        '--add-opens', 'java.base/java.math=ALL-UNNAMED',
+        '--add-opens', 'java.base/java.text=ALL-UNNAMED',
+        '--add-opens', 'java.base/sun.security.ssl=ALL-UNNAMED',
+        '--add-opens', 'java.base/sun.net.www.protocol.https=ALL-UNNAMED',
+    ]
 }

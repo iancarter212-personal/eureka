@@ -7,8 +7,9 @@ configurations.all {
 dependencies {
     api project(':eureka-core')
     api project(':eureka-client-jersey2')
-    api 'org.glassfish.jersey.core:jersey-client:2.23.1'
-    api 'org.glassfish.jersey.connectors:jersey-apache-connector:2.23.1'
+    api 'org.glassfish.jersey.core:jersey-client:2.41'
+    api 'org.glassfish.jersey.connectors:jersey-apache-connector:2.41'
+    api 'org.glassfish.jersey.inject:jersey-hk2:2.41'
 
     testImplementation (project(':eureka-test-utils')) {
         // exclude all transitives to avoid bringing in jersey1 eureka-core
@@ -21,5 +22,5 @@ dependencies {
     testImplementation "org.mock-server:mockserver-netty:${mockserverVersion}"
     testImplementation "org.mock-server:mockserver-junit-rule:${mockserverVersion}"
     testImplementation "org.mockito:mockito-core:${mockitoVersion}"
-    testRuntimeOnly 'org.slf4j:slf4j-simple:1.7.10'
+    testRuntimeOnly 'org.slf4j:slf4j-simple:1.7.36'
 }

@@ -131,7 +131,7 @@ public class TimedSupervisorTaskTest {
         TimedSupervisorTask supervisorTask = new TimedSupervisorTask("test", scheduler, executor, 4, TimeUnit.SECONDS, EXP_BACK_OFF_BOUND, testTask);
 
         scheduler.schedule(supervisorTask, 0, TimeUnit.SECONDS);
-        Awaitility.await().atMost(10, SECONDS).until(() -> testTaskStartCounter.get() >= 2);
+        Awaitility.await().atMost(10, SECONDS).until(() -> testTaskSuccessfulCounter.get() >= 2);
 
         Assert.assertEquals(1, maxConcurrentTestTasks.get());
         Assert.assertEquals(0, testTaskCounter.get());

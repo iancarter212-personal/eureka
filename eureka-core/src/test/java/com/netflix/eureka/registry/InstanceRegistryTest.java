@@ -12,8 +12,11 @@ import com.netflix.discovery.shared.Applications;
 import com.netflix.eureka.AbstractTester;
 import com.netflix.eureka.registry.AbstractInstanceRegistry.CircularQueue;
 import com.netflix.eureka.registry.AbstractInstanceRegistry.EvictionTask;
+import org.awaitility.Awaitility;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.TimeUnit;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertThat;
@@ -76,17 +79,15 @@ public class InstanceRegistryTest extends AbstractTester {
         Assert.assertEquals("UP_2_", registry.getApplicationsFromAllRemoteRegions().getAppsHashCode());
     }
 
-    private void waitForDeltaToBeRetrieved() throws InterruptedException {
-        int count = 0;
-        System.out.println("Sleeping up to 35 seconds to let the remote registry fetch delta.");
-        while (count++ < 35 && !mockRemoteEurekaServer.isSentDelta()) {
-            Thread.sleep(1000);
-        }
-        if (!mockRemoteEurekaServer.isSentDelta()) {
-            System.out.println("Waited for 35 seconds but remote server did not send delta");
-        }
+    private void waitForDeltaToBeRetrieved() {
+        System.out.println("Waiting up to 35 seconds to let the remote registry fetch delta.");
+        Awaitility.await().atMost(35, TimeUnit.SECONDS)
+                .pollInterval(200, TimeUnit.MILLISECONDS)
+                .until(() -> mockRemoteEurekaServer.isSentDelta());
         // Wait 2 seconds more to be sure the delta was processed
-        Thread.sleep(2000);
+        Awaitility.await().pollDelay(2, TimeUnit.SECONDS)
+                .atMost(3, TimeUnit.SECONDS)
+                .until(() -> true);
     }
 
     @Test

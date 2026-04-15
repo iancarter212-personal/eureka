@@ -1,7 +1,10 @@
 package com.netflix.discovery.converters;
 
 import com.netflix.discovery.util.StringCache;
+import org.awaitility.Awaitility;
 import org.junit.Test;
+
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertTrue;
 
@@ -27,10 +30,8 @@ public class StringCacheTest {
     public static void gc() {
         System.gc();
         System.runFinalization();
-        try {
-            Thread.sleep(1000);
-        } catch (InterruptedException e) {
-            // IGNORE
-        }
+        Awaitility.await().pollDelay(500, TimeUnit.MILLISECONDS)
+                .atMost(1, TimeUnit.SECONDS)
+                .until(() -> true);
     }
 }

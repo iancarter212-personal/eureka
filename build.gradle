@@ -59,9 +59,15 @@ subprojects {
     }
 
     test {
-        forkEvery = 1
+        forkEvery = 0
+        maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1
         // setting this property prevents java from grabbing focus when running the tests under osx
         systemProperty 'java.awt.headless', 'true'
+        if (!System.getProperty('include.slow.tests')) {
+            useJUnit {
+                excludeCategories 'com.netflix.eureka.test.SlowTests'
+            }
+        }
 
         // Java 21 strong encapsulation: open internal modules for reflection-based libraries
         jvmArgs [

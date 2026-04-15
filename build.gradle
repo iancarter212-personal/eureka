@@ -59,7 +59,7 @@ subprojects {
     }
 
     test {
-        forkEvery = 0
+        forkEvery = 1
         // setting this property prevents java from grabbing focus when running the tests under osx
         systemProperty 'java.awt.headless', 'true'
         if (!System.getProperty('include.slow.tests')) {

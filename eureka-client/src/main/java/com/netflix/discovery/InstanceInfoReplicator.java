@@ -1,6 +1,5 @@
 package com.netflix.discovery;
 
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.netflix.appinfo.InstanceInfo;
 import com.netflix.discovery.util.RateLimiter;
 import org.slf4j.Logger;
@@ -43,11 +42,13 @@ class InstanceInfoReplicator implements Runnable {
     InstanceInfoReplicator(DiscoveryClient discoveryClient, InstanceInfo instanceInfo, int replicationIntervalSeconds, int burstSize) {
         this.discoveryClient = discoveryClient;
         this.instanceInfo = instanceInfo;
+        // The replicator's single scheduled task performs blocking HTTP registration calls
+        // against the Eureka server. A virtual thread factory keeps this cheap and removes
+        // the dedicated platform thread previously maintained by this client.
         this.scheduler = Executors.newScheduledThreadPool(1,
-                new ThreadFactoryBuilder()
-                        .setNameFormat("DiscoveryClient-InstanceInfoReplicator-%d")
-                        .setDaemon(true)
-                        .build());
+                Thread.ofVirtual()
+                        .name("DiscoveryClient-InstanceInfoReplicator-", 0)
+                        .factory());
 
         this.scheduledPeriodicRef = new AtomicReference<Future>();
 

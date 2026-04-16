@@ -1,12 +1,14 @@
 package com.netflix.discovery;
 
 import java.util.TimerTask;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.netflix.servo.monitor.Counter;
@@ -33,7 +35,15 @@ public class TimedSupervisorTask extends TimerTask {
 
     private final String name;
     private final ScheduledExecutorService scheduler;
-    private final ThreadPoolExecutor executor;
+    private final ExecutorService executor;
+    /**
+     * When the executor is a {@link ThreadPoolExecutor} we can expose its active count
+     * as a gauge. For {@link Executors#newVirtualThreadPerTaskExecutor() virtual-thread
+     * per-task} executors, there is no bounded pool so we track inflight tasks ourselves
+     * via {@link #inflightTasks}.
+     */
+    private final ThreadPoolExecutor threadPoolExecutor;
+    private final AtomicInteger inflightTasks = new AtomicInteger();
     private final long timeoutMillis;
     private final Runnable task;
 
@@ -42,9 +52,32 @@ public class TimedSupervisorTask extends TimerTask {
 
     public TimedSupervisorTask(String name, ScheduledExecutorService scheduler, ThreadPoolExecutor executor,
                                int timeout, TimeUnit timeUnit, int expBackOffBound, Runnable task) {
+        this(name, scheduler, (ExecutorService) executor, executor, timeout, timeUnit, expBackOffBound, task);
+    }
+
+    /**
+     * Virtual-thread friendly constructor. Accepts any {@link ExecutorService} (e.g. one
+     * returned by {@link Executors#newVirtualThreadPerTaskExecutor()}), so callers can
+     * opt out of the bounded platform-thread pool entirely.
+     *
+     * <p>When the supplied executor is not a {@link ThreadPoolExecutor}, the
+     * {@code threadPoolUsed} gauge reflects the number of supervised tasks currently
+     * in-flight instead of the pool's active count.
+     */
+    public TimedSupervisorTask(String name, ScheduledExecutorService scheduler, ExecutorService executor,
+                               int timeout, TimeUnit timeUnit, int expBackOffBound, Runnable task) {
+        this(name, scheduler, executor,
+                executor instanceof ThreadPoolExecutor ? (ThreadPoolExecutor) executor : null,
+                timeout, timeUnit, expBackOffBound, task);
+    }
+
+    private TimedSupervisorTask(String name, ScheduledExecutorService scheduler, ExecutorService executor,
+                                ThreadPoolExecutor threadPoolExecutor,
+                                int timeout, TimeUnit timeUnit, int expBackOffBound, Runnable task) {
         this.name = name;
         this.scheduler = scheduler;
         this.executor = executor;
+        this.threadPoolExecutor = threadPoolExecutor;
         this.timeoutMillis = timeUnit.toMillis(timeout);
         this.task = task;
         this.delay = new AtomicLong(timeoutMillis);
@@ -59,15 +92,32 @@ public class TimedSupervisorTask extends TimerTask {
         Monitors.registerObject(name, this);
     }
 
+    private long currentActiveCount() {
+        return threadPoolExecutor != null ? threadPoolExecutor.getActiveCount() : inflightTasks.get();
+    }
+
     @Override
     public void run() {
         Future<?> future = null;
+        boolean submitted = false;
         try {
-            future = executor.submit(task);
-            threadPoolLevelGauge.set((long) executor.getActiveCount());
+            future = executor.submit(() -> {
+                try {
+                    task.run();
+                } finally {
+                    if (threadPoolExecutor == null) {
+                        inflightTasks.decrementAndGet();
+                    }
+                }
+            });
+            submitted = true;
+            if (threadPoolExecutor == null) {
+                inflightTasks.incrementAndGet();
+            }
+            threadPoolLevelGauge.set(currentActiveCount());
             future.get(timeoutMillis, TimeUnit.MILLISECONDS);  // block until done or timeout
             delay.set(timeoutMillis);
-            threadPoolLevelGauge.set((long) executor.getActiveCount());
+            threadPoolLevelGauge.set(currentActiveCount());
             successCounter.increment();
         } catch (TimeoutException e) {
             logger.warn("task supervisor timed out", e);
@@ -96,6 +146,11 @@ public class TimedSupervisorTask extends TimerTask {
         } finally {
             if (future != null) {
                 future.cancel(true);
+            }
+            if (!submitted && threadPoolExecutor == null) {
+                // The submit() call itself failed (e.g. rejected), so the wrapping
+                // Runnable never ran and never decremented the inflight counter.
+                // Nothing to reset here because we only increment on successful submit.
             }
 
             if (!scheduler.isShutdown()) {

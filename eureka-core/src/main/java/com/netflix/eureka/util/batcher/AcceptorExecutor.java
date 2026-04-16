@@ -101,10 +101,13 @@ class AcceptorExecutor<ID, T> {
         this.maxBatchingDelay = maxBatchingDelay;
         this.trafficShaper = new TrafficShaper(congestionRetryDelayMs, networkFailureRetryMs);
 
-        ThreadGroup threadGroup = new ThreadGroup("eurekaTaskExecutors");
-        this.acceptorThread = new Thread(threadGroup, new AcceptorRunner(), "TaskAcceptor-" + id);
-        this.acceptorThread.setDaemon(true);
-        this.acceptorThread.start();
+        // The acceptor thread manages queue state and hands work off to worker threads.
+        // It is effectively always blocked on the acceptor/reprocess queues, so a
+        // virtual thread is a natural fit and avoids tying up a dedicated platform
+        // thread per peer node.
+        this.acceptorThread = Thread.ofVirtual()
+                .name("TaskAcceptor-" + id)
+                .start(new AcceptorRunner());
 
         final double[] percentiles = {50.0, 95.0, 99.0, 99.5};
         final StatsConfig statsConfig = new StatsConfig.Builder()

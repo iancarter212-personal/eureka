@@ -40,12 +40,18 @@ class TaskExecutors<ID, T> {
         this.isShutdown = isShutdown;
         this.workerThreads = new ArrayList<>();
 
-        ThreadGroup threadGroup = new ThreadGroup("eurekaTaskExecutors");
+        // Worker runnables spend the majority of their time blocked either on the
+        // acceptor queue waiting for work or on outbound HTTP calls to peer servers
+        // inside the TaskProcessor. Running them on virtual threads allows the JVM
+        // to unmount the carrier during these blocking operations, removing the
+        // fixed-size platform-thread ceiling that previously limited peer replication
+        // concurrency.
         for (int i = 0; i < workerCount; i++) {
             WorkerRunnable<ID, T> runnable = workerRunnableFactory.create(i);
-            Thread workerThread = new Thread(threadGroup, runnable, runnable.getWorkerName());
+            Thread workerThread = Thread.ofVirtual()
+                    .name(runnable.getWorkerName())
+                    .unstarted(runnable);
             workerThreads.add(workerThread);
-            workerThread.setDaemon(true);
             workerThread.start();
         }
     }

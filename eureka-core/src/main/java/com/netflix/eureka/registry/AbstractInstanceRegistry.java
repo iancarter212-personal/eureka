@@ -39,6 +39,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import com.google.common.cache.CacheBuilder;
@@ -93,7 +94,20 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
     private final ReentrantReadWriteLock readWriteLock = new ReentrantReadWriteLock();
     private final Lock read = readWriteLock.readLock();
     private final Lock write = readWriteLock.writeLock();
-    protected final Object lock = new Object();
+    /**
+     * Protects updates to {@link #expectedNumberOfClientsSendingRenews}. Historically
+     * this was a plain {@code Object} guarded by {@code synchronized} blocks, but we
+     * use a {@link ReentrantLock} here so that virtual threads blocked waiting on
+     * this lock do not pin their carrier threads.
+     */
+    protected final ReentrantLock lock = new ReentrantLock();
+    /**
+     * Guards the lazy initialization of {@link #responseCache} in
+     * {@link #initializedResponseCache()}. A {@link ReentrantLock} is used instead of
+     * {@code synchronized} to keep the initialization path virtual-thread friendly
+     * (no carrier thread pinning if the cache's construction touches blocking I/O).
+     */
+    private final ReentrantLock responseCacheLock = new ReentrantLock();
 
     private Timer deltaRetentionTimer = new Timer("Eureka-DeltaRetentionTimer", true);
     private Timer evictionTimer = new Timer("Eureka-EvictionTimer", true);
@@ -128,9 +142,14 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
     }
 
     @Override
-    public synchronized void initializedResponseCache() {
-        if (responseCache == null) {
-            responseCache = new ResponseCacheImpl(serverConfig, serverCodecs, this);
+    public void initializedResponseCache() {
+        responseCacheLock.lock();
+        try {
+            if (responseCache == null) {
+                responseCache = new ResponseCacheImpl(serverConfig, serverCodecs, this);
+            }
+        } finally {
+            responseCacheLock.unlock();
         }
     }
 
@@ -219,12 +238,15 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                 }
             } else {
                 // The lease does not exist and hence it is a new registration
-                synchronized (lock) {
+                lock.lock();
+                try {
                     if (this.expectedNumberOfClientsSendingRenews > 0) {
                         // Since the client wants to register it, increase the number of clients sending renews
                         this.expectedNumberOfClientsSendingRenews = this.expectedNumberOfClientsSendingRenews + 1;
                         updateRenewsPerMinThreshold();
                     }
+                } finally {
+                    lock.unlock();
                 }
                 logger.debug("No previous lease information found; it is new registration");
             }
@@ -331,12 +353,15 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
             read.unlock();
         }
 
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (this.expectedNumberOfClientsSendingRenews > 0) {
                 // Since the client wants to cancel it, reduce the number of clients to send renews.
                 this.expectedNumberOfClientsSendingRenews = this.expectedNumberOfClientsSendingRenews - 1;
                 updateRenewsPerMinThreshold();
             }
+        } finally {
+            lock.unlock();
         }
 
         return true;

@@ -20,6 +20,7 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.netflix.appinfo.InstanceInfo.InstanceStatus;
 import com.netflix.appinfo.providers.EurekaConfigBasedInstanceInfoProvider;
@@ -59,6 +60,14 @@ public class ApplicationInfoManager {
 
     protected final Map<String, StatusChangeListener> listeners;
     private final InstanceStatusMapper instanceStatusMapper;
+    /**
+     * Guards concurrent {@link #setInstanceStatus(InstanceStatus)} invocations.
+     * A {@link ReentrantLock} is used in place of {@code synchronized} so that
+     * virtual threads contending for status transitions do not pin their carrier
+     * threads while listeners are notified (listeners may fire off further
+     * blocking work such as eager registration or replication).
+     */
+    private final ReentrantLock statusLock = new ReentrantLock();
 
     private InstanceInfo instanceInfo;
     private EurekaInstanceConfig config;
@@ -164,21 +173,26 @@ public class ApplicationInfoManager {
      *
      * @param status Status of the instance
      */
-    public synchronized void setInstanceStatus(InstanceStatus status) {
-        InstanceStatus next = instanceStatusMapper.map(status);
-        if (next == null) {
-            return;
-        }
+    public void setInstanceStatus(InstanceStatus status) {
+        statusLock.lock();
+        try {
+            InstanceStatus next = instanceStatusMapper.map(status);
+            if (next == null) {
+                return;
+            }
 
-        InstanceStatus prev = instanceInfo.setStatus(next);
-        if (prev != null) {
-            for (StatusChangeListener listener : listeners.values()) {
-                try {
-                    listener.notify(new StatusChangeEvent(prev, next));
-                } catch (Exception e) {
-                    logger.warn("failed to notify listener: {}", listener.getId(), e);
+            InstanceStatus prev = instanceInfo.setStatus(next);
+            if (prev != null) {
+                for (StatusChangeListener listener : listeners.values()) {
+                    try {
+                        listener.notify(new StatusChangeEvent(prev, next));
+                    } catch (Exception e) {
+                        logger.warn("failed to notify listener: {}", listener.getId(), e);
+                    }
                 }
             }
+        } finally {
+            statusLock.unlock();
         }
     }
 

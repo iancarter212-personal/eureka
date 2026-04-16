@@ -11,7 +11,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
 import com.netflix.appinfo.ApplicationInfoManager;
@@ -73,15 +72,12 @@ public class PeerEurekaNodes {
     }
 
     public void start() {
+        // The peer nodes updater does lightweight, periodic DNS/config lookups that
+        // often block on the network. A virtual thread factory is a natural fit and
+        // frees the dedicated platform thread that previously sat idle between
+        // scheduled invocations.
         taskExecutor = Executors.newSingleThreadScheduledExecutor(
-                new ThreadFactory() {
-                    @Override
-                    public Thread newThread(Runnable r) {
-                        Thread thread = new Thread(r, "Eureka-PeerNodesUpdater");
-                        thread.setDaemon(true);
-                        return thread;
-                    }
-                }
+                Thread.ofVirtual().name("Eureka-PeerNodesUpdater").factory()
         );
         try {
             updatePeerEurekaNodes(resolvePeerUrls());

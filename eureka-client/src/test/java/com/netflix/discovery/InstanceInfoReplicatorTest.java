@@ -9,7 +9,9 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -59,26 +61,30 @@ public class InstanceInfoReplicatorTest {
     @Test
     public void testOnDemandUpdate() throws Throwable {
         assertTrue(replicator.onDemandUpdate());
-        Thread.sleep(10);  // give some time for execution
+        await().atMost(1, TimeUnit.SECONDS).untilAsserted(() ->
+            verify(discoveryClient, times(1)).refreshInstanceInfo());
+
         assertTrue(replicator.onDemandUpdate());
         Thread.sleep(1000 * refreshRateSeconds / 2);
         assertTrue(replicator.onDemandUpdate());
-        Thread.sleep(10);
+        await().atMost(1, TimeUnit.SECONDS).untilAsserted(() ->
+            verify(discoveryClient, times(3)).refreshInstanceInfo());
 
-        verify(discoveryClient, times(3)).refreshInstanceInfo();
         verify(discoveryClient, times(1)).register();
     }
 
     @Test
     public void testOnDemandUpdateRateLimiting() throws Throwable {
         assertTrue(replicator.onDemandUpdate());
-        Thread.sleep(10);  // give some time for execution
-        assertTrue(replicator.onDemandUpdate());
-        Thread.sleep(10);  // give some time for execution
-        assertFalse(replicator.onDemandUpdate());
-        Thread.sleep(1000);
+        await().atMost(1, TimeUnit.SECONDS).untilAsserted(() ->
+            verify(discoveryClient, times(1)).refreshInstanceInfo());
 
-        verify(discoveryClient, times(2)).refreshInstanceInfo();
+        assertTrue(replicator.onDemandUpdate());
+        await().atMost(1, TimeUnit.SECONDS).untilAsserted(() ->
+            verify(discoveryClient, times(2)).refreshInstanceInfo());
+
+        assertFalse(replicator.onDemandUpdate());
+
         verify(discoveryClient, times(1)).register();
     }
 
@@ -89,8 +95,8 @@ public class InstanceInfoReplicatorTest {
 
         assertTrue(replicator.onDemandUpdate());
 
-        Thread.sleep(1000 * refreshRateSeconds + 50);
-        verify(discoveryClient, times(3)).refreshInstanceInfo(); // 1 initial refresh, 1 onDemand, 1 auto
+        await().atMost(1000 * refreshRateSeconds + 500, TimeUnit.MILLISECONDS).untilAsserted(() ->
+            verify(discoveryClient, times(3)).refreshInstanceInfo()); // 1 initial refresh, 1 onDemand, 1 auto
         verify(discoveryClient, times(1)).register();  // all but 1 is no-op
     }
 
@@ -100,8 +106,8 @@ public class InstanceInfoReplicatorTest {
 
         assertTrue(replicator.onDemandUpdate());
 
-        Thread.sleep(1000 * refreshRateSeconds + 100);
-        verify(discoveryClient, times(2)).refreshInstanceInfo(); // 1 onDemand, 1 auto
+        await().atMost(1000 * refreshRateSeconds + 500, TimeUnit.MILLISECONDS).untilAsserted(() ->
+            verify(discoveryClient, times(2)).refreshInstanceInfo()); // 1 onDemand, 1 auto
         verify(discoveryClient, times(1)).register();  // all but 1 is no-op
     }
 }

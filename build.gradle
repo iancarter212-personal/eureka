@@ -83,6 +83,8 @@ subprojects {
     }
 
     task slowTest(type: Test) {
+        testClassesDirs = sourceSets.test.output.classesDirs
+        classpath = sourceSets.test.runtimeClasspath
         forkEvery = 0
         useJUnit {
             includeCategories 'com.netflix.eureka.SlowTest'

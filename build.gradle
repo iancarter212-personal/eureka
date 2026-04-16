@@ -1,6 +1,7 @@
 plugins {
     id 'com.netflix.nebula.netflixoss' version '11.6.0'
     id 'org.gretty' version '4.1.6'
+    id 'com.github.spotbugs' version '6.0.27' apply false
 }
 
 idea {
@@ -48,6 +49,8 @@ allprojects {
 subprojects {
     apply plugin: 'nebula.netflixoss'
     apply plugin: 'java-library'
+    apply plugin: 'jacoco'
+    apply plugin: 'com.github.spotbugs'
 
     group = "com.netflix.${githubProjectName}"
 
@@ -76,6 +79,33 @@ subprojects {
             '--add-opens', 'java.base/sun.security.ssl=ALL-UNNAMED',
             '--add-opens', 'java.base/sun.net.www.protocol.https=ALL-UNNAMED',
         ]
+
+        finalizedBy jacocoTestReport
+    }
+
+    jacocoTestReport {
+        dependsOn test
+        reports {
+            xml.required = true
+            html.required = true
+        }
+    }
+
+    spotbugs {
+        ignoreFailures = true
+        effort = 'max'
+        reportLevel = 'medium'
+    }
+
+    spotbugsMain {
+        reports {
+            html.required = true
+            xml.required = true
+        }
+    }
+
+    spotbugsTest {
+        enabled = false
     }
 
     jar {

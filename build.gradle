@@ -59,7 +59,7 @@ subprojects {
     }
 
     test {
-        forkEvery = 0
+        forkEvery = 1
         maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1
         useJUnit {
             excludeCategories 'com.netflix.eureka.SlowTest'

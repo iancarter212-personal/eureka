@@ -62,7 +62,7 @@ subprojects {
     }
 
     test {
-        forkEvery = 1
+        forkEvery = 100
         // setting this property prevents java from grabbing focus when running the tests under osx
         systemProperty 'java.awt.headless', 'true'
 

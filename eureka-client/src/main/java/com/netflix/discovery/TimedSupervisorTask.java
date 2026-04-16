@@ -99,20 +99,36 @@ public class TimedSupervisorTask extends TimerTask {
     @Override
     public void run() {
         Future<?> future = null;
-        boolean submitted = false;
+        boolean inflightIncremented = false;
         try {
-            future = executor.submit(() -> {
-                try {
-                    task.run();
-                } finally {
-                    if (threadPoolExecutor == null) {
-                        inflightTasks.decrementAndGet();
-                    }
-                }
-            });
-            submitted = true;
+            // Increment the inflight counter BEFORE submitting so it is guaranteed
+            // to be visible to the wrapped Runnable's finally block. Virtual
+            // threads can start executing the submitted task immediately on the
+            // current carrier; if we incremented after submit() the decrement in
+            // the finally block could fire first and drive the counter negative.
             if (threadPoolExecutor == null) {
                 inflightTasks.incrementAndGet();
+                inflightIncremented = true;
+            }
+            try {
+                future = executor.submit(() -> {
+                    try {
+                        task.run();
+                    } finally {
+                        if (threadPoolExecutor == null) {
+                            inflightTasks.decrementAndGet();
+                        }
+                    }
+                });
+            } catch (Throwable submitError) {
+                // The executor rejected the task (or any other submit-time
+                // failure). The wrapping Runnable never ran, so we must undo
+                // the speculative increment ourselves.
+                if (inflightIncremented) {
+                    inflightTasks.decrementAndGet();
+                    inflightIncremented = false;
+                }
+                throw submitError;
             }
             threadPoolLevelGauge.set(currentActiveCount());
             future.get(timeoutMillis, TimeUnit.MILLISECONDS);  // block until done or timeout
@@ -146,11 +162,6 @@ public class TimedSupervisorTask extends TimerTask {
         } finally {
             if (future != null) {
                 future.cancel(true);
-            }
-            if (!submitted && threadPoolExecutor == null) {
-                // The submit() call itself failed (e.g. rejected), so the wrapping
-                // Runnable never ran and never decremented the inflight counter.
-                // Nothing to reset here because we only increment on successful submit.
             }
 
             if (!scheduler.isShutdown()) {

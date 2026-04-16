@@ -1,0 +1,9 @@
+.git
+.github
+.gitignore
+.netflixoss
+build
+**/build
+*.md
+images
+codequality

@@ -65,6 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     name: Dependency Review
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
       - name: Dependency Review

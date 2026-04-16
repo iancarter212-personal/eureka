@@ -14,7 +14,8 @@ The build automatically runs the following quality checks:
 
 - **JaCoCo** — code coverage reports (XML + HTML) generated after each test run, found in `<subproject>/build/reports/jacoco/`
 - **SpotBugs** — static analysis for common bug patterns, reports in `<subproject>/build/reports/spotbugs/`
-- **Checkstyle** — configuration at `codequality/checkstyle.xml` (available for local use)
+
+A **Checkstyle** configuration is also available at `codequality/checkstyle.xml` for local use.
 
 SpotBugs is configured with `ignoreFailures = true` so it produces reports without blocking the build.
 

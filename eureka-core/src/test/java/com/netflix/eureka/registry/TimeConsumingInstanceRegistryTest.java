@@ -11,12 +11,15 @@ import com.netflix.eureka.test.async.executor.SequentialEvents;
 import com.netflix.eureka.test.async.executor.SingleEvent;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+import com.netflix.eureka.SlowTest;
 
 /**
  * Time consuming test case for {@link InstanceRegistry}.
  *
  * @author neoremind
  */
+@Category(SlowTest.class)
 public class TimeConsumingInstanceRegistryTest extends AbstractTester {
 
     /**

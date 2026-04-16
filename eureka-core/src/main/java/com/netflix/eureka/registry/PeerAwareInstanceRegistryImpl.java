@@ -540,7 +540,13 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
                     }
                 }
             }
-            synchronized (lock) {
+            // AbstractInstanceRegistry#lock is a ReentrantLock; acquiring its
+            // intrinsic monitor via synchronized(lock) would NOT be mutually
+            // exclusive with the lock.lock() calls in register()/internalCancel().
+            // Use the ReentrantLock API here so all writers share the same
+            // critical section.
+            lock.lock();
+            try {
                 // Update threshold only if the threshold is greater than the
                 // current expected threshold or if self preservation is disabled.
                 if ((count) > (serverConfig.getRenewalPercentThreshold() * expectedNumberOfClientsSendingRenews)
@@ -548,6 +554,8 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
                     this.expectedNumberOfClientsSendingRenews = count;
                     updateRenewsPerMinThreshold();
                 }
+            } finally {
+                lock.unlock();
             }
             logger.info("Current renewal threshold is : {}", numberOfRenewsPerMinThreshold);
         } catch (Throwable e) {

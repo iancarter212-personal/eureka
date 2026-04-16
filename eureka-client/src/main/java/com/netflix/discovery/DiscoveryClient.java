@@ -33,6 +33,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -404,29 +405,32 @@ public class DiscoveryClient implements EurekaClient {
         }
 
         try {
+            // Virtual threads are ideal here: the scheduled tasks, heartbeat and cache
+            // refresh workloads are I/O bound (HTTP calls to the Eureka server) and spend
+            // nearly all of their time waiting on the network. Using virtual threads
+            // unmounts the carrier thread during I/O and avoids the fixed-size platform
+            // thread pool ceiling that previously capped concurrency.
+            //
             // default size of 2 - 1 each for heartbeat and cacheRefresh
-            scheduler = Executors.newScheduledThreadPool(2,
-                    new ThreadFactoryBuilder()
-                            .setNameFormat("DiscoveryClient-%d")
-                            .setDaemon(true)
-                            .build());
+            ThreadFactory schedulerFactory = Thread.ofVirtual()
+                    .name("DiscoveryClient-", 0)
+                    .factory();
+            scheduler = Executors.newScheduledThreadPool(2, schedulerFactory);
 
             heartbeatExecutor = new ThreadPoolExecutor(
                     1, clientConfig.getHeartbeatExecutorThreadPoolSize(), 0, TimeUnit.SECONDS,
                     new SynchronousQueue<Runnable>(),
-                    new ThreadFactoryBuilder()
-                            .setNameFormat("DiscoveryClient-HeartbeatExecutor-%d")
-                            .setDaemon(true)
-                            .build()
+                    Thread.ofVirtual()
+                            .name("DiscoveryClient-HeartbeatExecutor-", 0)
+                            .factory()
             );  // use direct handoff
 
             cacheRefreshExecutor = new ThreadPoolExecutor(
                     1, clientConfig.getCacheRefreshExecutorThreadPoolSize(), 0, TimeUnit.SECONDS,
                     new SynchronousQueue<Runnable>(),
-                    new ThreadFactoryBuilder()
-                            .setNameFormat("DiscoveryClient-CacheRefreshExecutor-%d")
-                            .setDaemon(true)
-                            .build()
+                    Thread.ofVirtual()
+                            .name("DiscoveryClient-CacheRefreshExecutor-", 0)
+                            .factory()
             );  // use direct handoff
 
             eurekaTransport = new EurekaTransport();

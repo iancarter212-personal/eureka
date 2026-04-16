@@ -48,6 +48,7 @@ jobs:
           CI_BUILD_URL: 'https://github.com/${{ github.repository }}'
           CI_BRANCH: ${{ github.ref }}
           COVERALLS_REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v4
@@ -55,3 +56,31 @@ jobs:
           name: test-reports-java-${{ matrix.java }}
           path: '**/build/reports/tests/'
           retention-days: 14
+
+      - name: Upload JaCoCo coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-reports-java-${{ matrix.java }}
+          path: '**/build/reports/jacoco/test/jacocoTestReport.xml'
+          retention-days: 14
+
+      - name: Upload SpotBugs reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spotbugs-reports-java-${{ matrix.java }}
+          path: '**/build/reports/spotbugs/*.xml'
+          retention-days: 14
+
+  dependency-review:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    name: Dependency Review
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: critical

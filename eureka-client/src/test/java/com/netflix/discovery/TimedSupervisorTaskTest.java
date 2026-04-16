@@ -15,6 +15,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.awaitility.Awaitility.await;
+
 public class TimedSupervisorTaskTest {
 
     private static final int EXP_BACK_OFF_BOUND = 10;
@@ -128,7 +131,13 @@ public class TimedSupervisorTaskTest {
         TimedSupervisorTask supervisorTask = new TimedSupervisorTask("test", scheduler, executor, 4, TimeUnit.SECONDS, EXP_BACK_OFF_BOUND, testTask);
 
         scheduler.schedule(supervisorTask, 0, TimeUnit.SECONDS);
-        Thread.sleep(5000);  // let the scheduler run for long enough for some results
+        // wait for at least one task to have completed successfully
+        await().atMost(5, SECONDS).untilAsserted(() -> {
+            Assert.assertEquals(1, maxConcurrentTestTasks.get());
+            Assert.assertEquals(0, testTaskCounter.get());
+            Assert.assertEquals(0, testTaskInterruptedCounter.get());
+            Assert.assertTrue(testTaskSuccessfulCounter.get() >= 1);
+        });
 
         Assert.assertEquals(1, maxConcurrentTestTasks.get());
         Assert.assertEquals(0, testTaskCounter.get());
@@ -143,7 +152,12 @@ public class TimedSupervisorTaskTest {
         TimedSupervisorTask supervisorTask = new TimedSupervisorTask("test", scheduler, executor, 2, TimeUnit.SECONDS, EXP_BACK_OFF_BOUND, testTask);
 
         scheduler.schedule(supervisorTask, 0, TimeUnit.SECONDS);
-        Thread.sleep(5000);  // let the scheduler run for long enough for some results
+        // wait for the scheduler to produce at least one cancelled task
+        await().atMost(5, SECONDS).untilAsserted(() -> {
+            Assert.assertEquals(1, maxConcurrentTestTasks.get());
+            Assert.assertTrue(0 != testTaskCounter.get());  // tasks are been cancelled
+            Assert.assertEquals(0, testTaskSuccessfulCounter.get());
+        });
 
         Assert.assertEquals(1, maxConcurrentTestTasks.get());
         Assert.assertTrue(0 != testTaskCounter.get());  // tasks are been cancelled

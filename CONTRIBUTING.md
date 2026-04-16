@@ -41,7 +41,7 @@ Runs on every push and pull request:
 - Builds and tests with Java 21
 - Generates JaCoCo coverage reports (uploaded as artifacts)
 - Generates SpotBugs static analysis reports (uploaded as artifacts)
-- Runs dependency review on pull requests (fails on critical vulnerabilities)
+- Runs dependency review on pull requests (reports critical vulnerabilities, non-blocking — requires [Dependency Graph](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-the-dependency-graph) to be enabled in repo settings)
 
 ### Snapshot Publish (`.github/workflows/nebula-snapshot.yml`)
 

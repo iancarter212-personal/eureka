@@ -540,7 +540,8 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
                     }
                 }
             }
-            synchronized (lock) {
+            lock.lock();
+            try {
                 // Update threshold only if the threshold is greater than the
                 // current expected threshold or if self preservation is disabled.
                 if ((count) > (serverConfig.getRenewalPercentThreshold() * expectedNumberOfClientsSendingRenews)
@@ -548,6 +549,8 @@ public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry impl
                     this.expectedNumberOfClientsSendingRenews = count;
                     updateRenewsPerMinThreshold();
                 }
+            } finally {
+                lock.unlock();
             }
             logger.info("Current renewal threshold is : {}", numberOfRenewsPerMinThreshold);
         } catch (Throwable e) {

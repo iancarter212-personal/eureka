@@ -8,6 +8,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import com.netflix.discovery.util.VirtualThreadSupport;
 import com.netflix.eureka.util.batcher.TaskProcessor.ProcessingResult;
 import com.netflix.servo.annotations.DataSourceType;
 import com.netflix.servo.annotations.Monitor;
@@ -40,12 +41,10 @@ class TaskExecutors<ID, T> {
         this.isShutdown = isShutdown;
         this.workerThreads = new ArrayList<>();
 
-        ThreadGroup threadGroup = new ThreadGroup("eurekaTaskExecutors");
         for (int i = 0; i < workerCount; i++) {
             WorkerRunnable<ID, T> runnable = workerRunnableFactory.create(i);
-            Thread workerThread = new Thread(threadGroup, runnable, runnable.getWorkerName());
+            Thread workerThread = VirtualThreadSupport.newThread(runnable, runnable.getWorkerName());
             workerThreads.add(workerThread);
-            workerThread.setDaemon(true);
             workerThread.start();
         }
     }

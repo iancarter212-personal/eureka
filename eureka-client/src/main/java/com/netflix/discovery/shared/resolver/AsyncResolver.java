@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
@@ -18,6 +19,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+
+import com.netflix.discovery.util.VirtualThreadSupport;
 
 import static com.netflix.discovery.EurekaClientNames.METRIC_RESOLVER_PREFIX;
 
@@ -38,7 +41,7 @@ public class AsyncResolver<T extends EurekaEndpoint> implements ClosableResolver
     private final String name;    // a name for metric purposes
     private final ClusterResolver<T> delegate;
     private final ScheduledExecutorService executorService;
-    private final ThreadPoolExecutor threadPoolExecutor;
+    private final ExecutorService threadPoolExecutor;
     private final TimedSupervisorTask backgroundTask;
     private final AtomicReference<List<T>> resultsRef;
 
@@ -113,14 +116,16 @@ public class AsyncResolver<T extends EurekaEndpoint> implements ClosableResolver
                         .setDaemon(true)
                         .build());
 
-        this.threadPoolExecutor = new ThreadPoolExecutor(
-                1, executorThreadPoolSize, 0, TimeUnit.SECONDS,
-                new SynchronousQueue<Runnable>(),  // use direct handoff
-                new ThreadFactoryBuilder()
-                        .setNameFormat("AsyncResolver-" + name + "-executor-%d")
-                        .setDaemon(true)
-                        .build()
-        );
+        this.threadPoolExecutor = VirtualThreadSupport.isEnabled()
+                ? Executors.newVirtualThreadPerTaskExecutor()
+                : new ThreadPoolExecutor(
+                        1, executorThreadPoolSize, 0, TimeUnit.SECONDS,
+                        new SynchronousQueue<Runnable>(),  // use direct handoff
+                        new ThreadFactoryBuilder()
+                                .setNameFormat("AsyncResolver-" + name + "-executor-%d")
+                                .setDaemon(true)
+                                .build()
+                );
 
         this.backgroundTask = new TimedSupervisorTask(
                 this.getClass().getSimpleName(),

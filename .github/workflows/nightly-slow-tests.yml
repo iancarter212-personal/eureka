@@ -1,24 +1,16 @@
-name: "CI"
+name: "Nightly Slow Tests"
 on:
-  push:
-    branches:
-      - '*'
-    tags-ignore:
-      - '*'
-  pull_request:
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
 
 jobs:
-  build:
+  slow-tests:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # test against JDK 21
-        java: [ 17, 21 ]
-    name: CI with Java ${{ matrix.java }}
+        java: [ 21 ]
+    name: Slow Tests with Java ${{ matrix.java }}
     steps:
       - uses: actions/checkout@v6
       - name: Setup jdk
@@ -40,25 +32,10 @@ jobs:
           key: ${{ runner.os }}-gradlewrapper-${{ hashFiles('gradle/wrapper/*') }}
           restore-keys: |
             ${{ runner.os }}-gradlewrapper-
-      - uses: actions/cache@v5
-        id: gradle-build-cache
-        with:
-          path: ~/.gradle/caches/build-cache-1
-          key: ${{ runner.os }}-gradle-build-cache-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-build-cache-
-      - name: Build with Gradle
-        run: ./gradlew --stacktrace build
+      - name: Run slow tests
+        run: ./gradlew --stacktrace test -Dinclude.slow.tests=true
         env:
           CI_NAME: github_actions
           CI_BUILD_NUMBER: ${{ github.sha }}
           CI_BUILD_URL: 'https://github.com/${{ github.repository }}'
           CI_BRANCH: ${{ github.ref }}
-          COVERALLS_REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Upload test reports
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-reports-java-${{ matrix.java }}
-          path: '**/build/reports/tests/'
-          retention-days: 14

@@ -64,6 +64,8 @@ public class StatusFilter implements Filter {
             httpResponse.sendError(SC_TEMPORARY_REDIRECT,
                     "Current node is currently not ready to serve requests -- current status: "
                             + status + " - try another DS node: ");
+            // Do not continue the filter chain after sending an error response.
+            return;
         }
         chain.doFilter(request, response);
     }

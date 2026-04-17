@@ -21,12 +21,12 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Date;
 import java.util.List;
-import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.GZIPOutputStream;
@@ -87,7 +87,16 @@ public class ResponseCacheImpl implements ResponseCache {
     private static final AtomicLong versionDeltaWithRegionsLegacy = new AtomicLong(0);
 
     private static final String EMPTY_PAYLOAD = "";
-    private final java.util.Timer timer = new java.util.Timer("Eureka-CacheFillTimer", true);
+    /**
+     * Uses {@link ScheduledExecutorService} instead of {@link java.util.Timer}
+     * so that an unchecked exception in the cache update task does not silently
+     * terminate the scheduler thread and leave the read-only cache stale.
+     */
+    private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "Eureka-CacheFillTimer");
+        t.setDaemon(true);
+        return t;
+    });
     private final AtomicLong versionDelta = new AtomicLong(0);
     private final AtomicLong versionDeltaWithRegions = new AtomicLong(0);
 
@@ -155,10 +164,13 @@ public class ResponseCacheImpl implements ResponseCache {
                         });
 
         if (shouldUseReadOnlyResponseCache) {
-            timer.schedule(getCacheUpdateTask(),
-                    new Date(((System.currentTimeMillis() / responseCacheUpdateIntervalMs) * responseCacheUpdateIntervalMs)
-                            + responseCacheUpdateIntervalMs),
-                    responseCacheUpdateIntervalMs);
+            long now = System.currentTimeMillis();
+            long initialDelayMs = (((now / responseCacheUpdateIntervalMs) * responseCacheUpdateIntervalMs)
+                    + responseCacheUpdateIntervalMs) - now;
+            timer.scheduleWithFixedDelay(getCacheUpdateTask(),
+                    initialDelayMs,
+                    responseCacheUpdateIntervalMs,
+                    TimeUnit.MILLISECONDS);
         }
 
         try {
@@ -168,28 +180,25 @@ public class ResponseCacheImpl implements ResponseCache {
         }
     }
 
-    private TimerTask getCacheUpdateTask() {
-        return new TimerTask() {
-            @Override
-            public void run() {
-                logger.debug("Updating the client cache from response cache");
-                for (Key key : readOnlyCacheMap.keySet()) {
-                    if (logger.isDebugEnabled()) {
-                        logger.debug("Updating the client cache from response cache for key : {} {} {} {}",
-                                key.getEntityType(), key.getName(), key.getVersion(), key.getType());
+    private Runnable getCacheUpdateTask() {
+        return () -> {
+            logger.debug("Updating the client cache from response cache");
+            for (Key key : readOnlyCacheMap.keySet()) {
+                if (logger.isDebugEnabled()) {
+                    logger.debug("Updating the client cache from response cache for key : {} {} {} {}",
+                            key.getEntityType(), key.getName(), key.getVersion(), key.getType());
+                }
+                try {
+                    CurrentRequestVersion.set(key.getVersion());
+                    Value cacheValue = readWriteCacheMap.get(key);
+                    Value currentCacheValue = readOnlyCacheMap.get(key);
+                    if (cacheValue != currentCacheValue) {
+                        readOnlyCacheMap.put(key, cacheValue);
                     }
-                    try {
-                        CurrentRequestVersion.set(key.getVersion());
-                        Value cacheValue = readWriteCacheMap.get(key);
-                        Value currentCacheValue = readOnlyCacheMap.get(key);
-                        if (cacheValue != currentCacheValue) {
-                            readOnlyCacheMap.put(key, cacheValue);
-                        }
-                    } catch (Throwable th) {
-                        logger.error("Error while updating the client cache from response cache for key {}", key.toStringCompact(), th);
-                    } finally {
-                        CurrentRequestVersion.remove();
-                    }
+                } catch (Throwable th) {
+                    logger.error("Error while updating the client cache from response cache for key {}", key.toStringCompact(), th);
+                } finally {
+                    CurrentRequestVersion.remove();
                 }
             }
         };
@@ -240,7 +249,7 @@ public class ResponseCacheImpl implements ResponseCache {
 
     @Override
     public void stop() {
-        timer.cancel();
+        timer.shutdownNow();
         Monitors.unregisterObject(this);
     }
 

@@ -1,5 +1,7 @@
 package com.netflix.discovery;
 
+import java.util.concurrent.locks.ReentrantLock;
+
 /**
  * An interface that contains a contract of mapping availability zone to region mapping. An implementation will always
  * know before hand which zone to region mapping will be queried from the mapper, this will aid caching of this
@@ -29,4 +31,13 @@ public interface AzToRegionMapper {
      * Updates the mappings it has if they depend on an external source.
      */
     void refreshMapping();
+
+    /**
+     * @return the lock that external callers should acquire when they need to
+     *         mutually exclude multiple mutator calls on this mapper.
+     *         Historically callers {@code synchronized} on the mapper instance
+     *         itself; exposing an explicit {@link ReentrantLock} avoids pinning
+     *         carrier threads when called from virtual threads.
+     */
+    ReentrantLock getLock();
 }

@@ -15,9 +15,12 @@
  */
 package com.netflix.eureka.util;
 
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,7 +36,23 @@ public class MeasuredRate {
     private final AtomicLong currentBucket = new AtomicLong(0);
 
     private final long sampleInterval;
-    private final Timer timer;
+    /**
+     * Uses a {@link ScheduledExecutorService} rather than {@link java.util.Timer}
+     * because {@code Timer} silently terminates its single worker thread if a
+     * task throws an unchecked exception, whereas the scheduled executor keeps
+     * running subsequent executions. It also aligns better with the virtual
+     * thread strategy used elsewhere in Eureka.
+     */
+    private final ScheduledExecutorService executor;
+    private ScheduledFuture<?> scheduledTask;
+
+    /**
+     * Guards lifecycle transitions of {@link #scheduledTask}. Previously the
+     * {@code start}/{@code stop} methods were {@code synchronized}; a
+     * {@link ReentrantLock} is used instead to avoid pinning carrier threads
+     * when called from virtual threads.
+     */
+    private final ReentrantLock lock = new ReentrantLock();
 
     private volatile boolean isActive;
 
@@ -42,33 +61,47 @@ public class MeasuredRate {
      */
     public MeasuredRate(long sampleInterval) {
         this.sampleInterval = sampleInterval;
-        this.timer = new Timer("Eureka-MeasureRateTimer", true);
+        this.executor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "Eureka-MeasureRateTimer");
+            t.setDaemon(true);
+            return t;
+        });
         this.isActive = false;
     }
 
-    public synchronized void start() {
-        if (!isActive) {
-            timer.schedule(new TimerTask() {
-
-                @Override
-                public void run() {
+    public void start() {
+        lock.lock();
+        try {
+            if (!isActive) {
+                scheduledTask = executor.scheduleAtFixedRate(() -> {
                     try {
                         // Zero out the current bucket.
                         lastBucket.set(currentBucket.getAndSet(0));
                     } catch (Throwable e) {
                         logger.error("Cannot reset the Measured Rate", e);
                     }
-                }
-            }, sampleInterval, sampleInterval);
+                }, sampleInterval, sampleInterval, TimeUnit.MILLISECONDS);
 
-            isActive = true;
+                isActive = true;
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
-    public synchronized void stop() {
-        if (isActive) {
-            timer.cancel();
-            isActive = false;
+    public void stop() {
+        lock.lock();
+        try {
+            if (isActive) {
+                if (scheduledTask != null) {
+                    scheduledTask.cancel(false);
+                    scheduledTask = null;
+                }
+                executor.shutdownNow();
+                isActive = false;
+            }
+        } finally {
+            lock.unlock();
         }
     }
 

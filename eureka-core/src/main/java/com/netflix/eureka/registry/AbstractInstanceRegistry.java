@@ -29,12 +29,12 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Random;
 import java.util.Set;
-import java.util.Timer;
-import java.util.TimerTask;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -109,8 +109,23 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
      */
     private final ReentrantLock responseCacheLock = new ReentrantLock();
 
-    private Timer deltaRetentionTimer = new Timer("Eureka-DeltaRetentionTimer", true);
-    private Timer evictionTimer = new Timer("Eureka-EvictionTimer", true);
+    /**
+     * Uses {@link ScheduledExecutorService} instead of {@link java.util.Timer}
+     * so that unchecked exceptions in one task do not silently terminate the
+     * scheduler thread and prevent all subsequent runs.
+     */
+    private final ScheduledExecutorService deltaRetentionTimer =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "Eureka-DeltaRetentionTimer");
+                t.setDaemon(true);
+                return t;
+            });
+    private final ScheduledExecutorService evictionTimer =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "Eureka-EvictionTimer");
+                t.setDaemon(true);
+                return t;
+            });
     private final MeasuredRate renewsLastMin;
 
     private final AtomicReference<EvictionTask> evictionTaskRef = new AtomicReference<>();
@@ -136,9 +151,10 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
 
         this.renewsLastMin = new MeasuredRate(1000 * 60 * 1);
 
-        this.deltaRetentionTimer.schedule(getDeltaRetentionTask(),
+        this.deltaRetentionTimer.scheduleAtFixedRate(getDeltaRetentionTask(),
                 serverConfig.getDeltaRetentionTimerIntervalInMs(),
-                serverConfig.getDeltaRetentionTimerIntervalInMs());
+                serverConfig.getDeltaRetentionTimerIntervalInMs(),
+                TimeUnit.MILLISECONDS);
     }
 
     @Override
@@ -1236,13 +1252,17 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
 
     protected void postInit() {
         renewsLastMin.start();
-        if (evictionTaskRef.get() != null) {
-            evictionTaskRef.get().cancel();
+        EvictionTask existingTask = evictionTaskRef.get();
+        if (existingTask != null) {
+            existingTask.cancel();
         }
-        evictionTaskRef.set(new EvictionTask());
-        evictionTimer.schedule(evictionTaskRef.get(),
-                serverConfig.getEvictionIntervalTimerInMs(),
-                serverConfig.getEvictionIntervalTimerInMs());
+        EvictionTask newTask = new EvictionTask();
+        evictionTaskRef.set(newTask);
+        newTask.setScheduledFuture(
+                evictionTimer.scheduleAtFixedRate(newTask,
+                        serverConfig.getEvictionIntervalTimerInMs(),
+                        serverConfig.getEvictionIntervalTimerInMs(),
+                        TimeUnit.MILLISECONDS));
     }
 
     /**
@@ -1250,8 +1270,8 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
      */
     @Override
     public void shutdown() {
-        deltaRetentionTimer.cancel();
-        evictionTimer.cancel();
+        deltaRetentionTimer.shutdownNow();
+        evictionTimer.shutdownNow();
         renewsLastMin.stop();
         responseCache.stop();
     }
@@ -1261,9 +1281,10 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
         return overriddenInstanceStatusMap.size();
     }
 
-    /* visible for testing */ class EvictionTask extends TimerTask {
+    /* visible for testing */ class EvictionTask implements Runnable {
 
         private final AtomicLong lastExecutionNanosRef = new AtomicLong(0l);
+        private volatile java.util.concurrent.ScheduledFuture<?> scheduledFuture;
 
         @Override
         public void run() {
@@ -1274,6 +1295,21 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
             } catch (Throwable e) {
                 logger.error("Could not run the evict task", e);
             }
+        }
+
+        void setScheduledFuture(java.util.concurrent.ScheduledFuture<?> scheduledFuture) {
+            this.scheduledFuture = scheduledFuture;
+        }
+
+        /**
+         * Cancels a previously scheduled run of this task, if any.
+         */
+        public boolean cancel() {
+            java.util.concurrent.ScheduledFuture<?> future = this.scheduledFuture;
+            if (future != null) {
+                return future.cancel(false);
+            }
+            return false;
         }
 
         /**
@@ -1362,22 +1398,17 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
         return rule.apply(r, existingLease, isReplication).status();
     }
 
-    private TimerTask getDeltaRetentionTask() {
-        return new TimerTask() {
-
-            @Override
-            public void run() {
-                Iterator<RecentlyChangedItem> it = recentlyChangedQueue.iterator();
-                while (it.hasNext()) {
-                    if (it.next().getLastUpdateTime() <
-                            System.currentTimeMillis() - serverConfig.getRetentionTimeInMSInDeltaQueue()) {
-                        it.remove();
-                    } else {
-                        break;
-                    }
+    private Runnable getDeltaRetentionTask() {
+        return () -> {
+            Iterator<RecentlyChangedItem> it = recentlyChangedQueue.iterator();
+            while (it.hasNext()) {
+                if (it.next().getLastUpdateTime() <
+                        System.currentTimeMillis() - serverConfig.getRetentionTimeInMSInDeltaQueue()) {
+                    it.remove();
+                } else {
+                    break;
                 }
             }
-
         };
     }
 }

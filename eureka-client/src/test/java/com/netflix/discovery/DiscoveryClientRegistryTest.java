@@ -315,7 +315,9 @@ public class DiscoveryClientRegistryTest {
     }
 
     /**
-     * There is a bug, because of which remote registry data structures are not initialized during full registry fetch, only during delta.
+     * Full registry fetch now correctly initializes remote region data
+     * structures, so the previous workaround of loading remote apps via delta
+     * is no longer necessary.
      */
     private void prepareRemoteRegionRegistry() throws Exception {
         Applications localApplications = InstanceInfoGenerator.newBuilder(4, "app1", "app2").build().toApplications();
@@ -323,17 +325,8 @@ public class DiscoveryClientRegistryTest {
 
         Applications allApplications = mergeApplications(localApplications, remoteApplications);
 
-        // Load remote data in delta, to go around exiting bug in DiscoveryClient
-        Applications delta = copyApplications(remoteApplications);
-        delta.setAppsHashCode(allApplications.getAppsHashCode());
-
         when(requestHandler.getApplications(TEST_REMOTE_REGION)).thenReturn(
-                anEurekaHttpResponse(200, localApplications).type(MediaType.APPLICATION_JSON_TYPE).build()
+                anEurekaHttpResponse(200, allApplications).type(MediaType.APPLICATION_JSON_TYPE).build()
         );
-        when(requestHandler.getDelta(TEST_REMOTE_REGION)).thenReturn(
-                anEurekaHttpResponse(200, delta).type(MediaType.APPLICATION_JSON_TYPE).build()
-        );
-
-        assertThat(discoveryClientResource.awaitCacheUpdate(5, TimeUnit.SECONDS), is(true));
     }
 }

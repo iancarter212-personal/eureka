@@ -166,6 +166,13 @@ public class DiscoveryClient implements EurekaClient {
     private final PreRegistrationHandler preRegistrationHandler;
     private final AtomicReference<Applications> localRegionApps = new AtomicReference<>();
     private final Lock fetchRegistryUpdateLock = new ReentrantLock();
+    /**
+     * Guards class-level mutable lifecycle state (shutdown and remote-status
+     * updates). Previously these were {@code synchronized} methods; using a
+     * {@link ReentrantLock} keeps the implementation virtual-thread friendly
+     * by avoiding carrier-thread pinning.
+     */
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
     // monotonically increasing generation counter to ensure stale threads do not reset registry to an older version
     private final AtomicLong fetchRegistryGeneration;
     private final ApplicationInfoManager applicationInfoManager;
@@ -293,9 +300,19 @@ public class DiscoveryClient implements EurekaClient {
     public DiscoveryClient(ApplicationInfoManager applicationInfoManager, final EurekaClientConfig config, AbstractDiscoveryClientOptionalArgs args, EndpointRandomizer randomizer) {
         this(applicationInfoManager, config, args, new Provider<BackupRegistry>() {
             private volatile BackupRegistry backupRegistryInstance;
+            private final ReentrantLock initLock = new ReentrantLock();
 
             @Override
-            public synchronized BackupRegistry get() {
+            public BackupRegistry get() {
+                initLock.lock();
+                try {
+                    return getInternal();
+                } finally {
+                    initLock.unlock();
+                }
+            }
+
+            private BackupRegistry getInternal() {
                 if (backupRegistryInstance == null) {
                     String backupRegistryClassName = config.getBackupRegistryImpl();
                     if (null != backupRegistryClassName) {
@@ -952,34 +969,39 @@ public class DiscoveryClient implements EurekaClient {
      */
     @PreDestroy
     @Override
-    public synchronized void shutdown() {
-        if (isShutdown.compareAndSet(false, true)) {
-            logger.info("Shutting down DiscoveryClient ...");
+    public void shutdown() {
+        lifecycleLock.lock();
+        try {
+            if (isShutdown.compareAndSet(false, true)) {
+                logger.info("Shutting down DiscoveryClient ...");
 
-            if (statusChangeListener != null && applicationInfoManager != null) {
-                applicationInfoManager.unregisterStatusChangeListener(statusChangeListener.getId());
+                if (statusChangeListener != null && applicationInfoManager != null) {
+                    applicationInfoManager.unregisterStatusChangeListener(statusChangeListener.getId());
+                }
+
+                cancelScheduledTasks();
+
+                // If APPINFO was registered
+                if (applicationInfoManager != null
+                        && clientConfig.shouldRegisterWithEureka()
+                        && clientConfig.shouldUnregisterOnShutdown()) {
+                    applicationInfoManager.setInstanceStatus(InstanceStatus.DOWN);
+                    unregister();
+                }
+
+                if (eurekaTransport != null) {
+                    eurekaTransport.shutdown();
+                }
+
+                heartbeatStalenessMonitor.shutdown();
+                registryStalenessMonitor.shutdown();
+
+                Monitors.unregisterObject(this);
+
+                logger.info("Completed shut down of DiscoveryClient");
             }
-
-            cancelScheduledTasks();
-
-            // If APPINFO was registered
-            if (applicationInfoManager != null
-                    && clientConfig.shouldRegisterWithEureka()
-                    && clientConfig.shouldUnregisterOnShutdown()) {
-                applicationInfoManager.setInstanceStatus(InstanceStatus.DOWN);
-                unregister();
-            }
-
-            if (eurekaTransport != null) {
-                eurekaTransport.shutdown();
-            }
-
-            heartbeatStalenessMonitor.shutdown();
-            registryStalenessMonitor.shutdown();
-
-            Monitors.unregisterObject(this);
-
-            logger.info("Completed shut down of DiscoveryClient");
+        } finally {
+            lifecycleLock.unlock();
         }
     }
 
@@ -1059,26 +1081,31 @@ public class DiscoveryClient implements EurekaClient {
         return true;
     }
 
-    private synchronized void updateInstanceRemoteStatus() {
-        // Determine this instance's status for this app and set to UNKNOWN if not found
-        InstanceInfo.InstanceStatus currentRemoteInstanceStatus = null;
-        if (instanceInfo.getAppName() != null) {
-            Application app = getApplication(instanceInfo.getAppName());
-            if (app != null) {
-                InstanceInfo remoteInstanceInfo = app.getByInstanceId(instanceInfo.getId());
-                if (remoteInstanceInfo != null) {
-                    currentRemoteInstanceStatus = remoteInstanceInfo.getStatus();
+    private void updateInstanceRemoteStatus() {
+        lifecycleLock.lock();
+        try {
+            // Determine this instance's status for this app and set to UNKNOWN if not found
+            InstanceInfo.InstanceStatus currentRemoteInstanceStatus = null;
+            if (instanceInfo.getAppName() != null) {
+                Application app = getApplication(instanceInfo.getAppName());
+                if (app != null) {
+                    InstanceInfo remoteInstanceInfo = app.getByInstanceId(instanceInfo.getId());
+                    if (remoteInstanceInfo != null) {
+                        currentRemoteInstanceStatus = remoteInstanceInfo.getStatus();
+                    }
                 }
             }
-        }
-        if (currentRemoteInstanceStatus == null) {
-            currentRemoteInstanceStatus = InstanceInfo.InstanceStatus.UNKNOWN;
-        }
+            if (currentRemoteInstanceStatus == null) {
+                currentRemoteInstanceStatus = InstanceInfo.InstanceStatus.UNKNOWN;
+            }
 
-        // Notify if status changed
-        if (lastRemoteInstanceStatus != currentRemoteInstanceStatus) {
-            onRemoteStatusChanged(lastRemoteInstanceStatus, currentRemoteInstanceStatus);
-            lastRemoteInstanceStatus = currentRemoteInstanceStatus;
+            // Notify if status changed
+            if (lastRemoteInstanceStatus != currentRemoteInstanceStatus) {
+                onRemoteStatusChanged(lastRemoteInstanceStatus, currentRemoteInstanceStatus);
+                lastRemoteInstanceStatus = currentRemoteInstanceStatus;
+            }
+        } finally {
+            lifecycleLock.unlock();
         }
     }
 
@@ -1533,7 +1560,9 @@ public class DiscoveryClient implements EurekaClient {
                 String currentRemoteRegions = remoteRegionsToFetch.get();
                 if (!latestRemoteRegions.equals(currentRemoteRegions)) {
                     // Both remoteRegionsToFetch and AzToRegionMapper.regionsToFetch need to be in sync
-                    synchronized (instanceRegionChecker.getAzToRegionMapper()) {
+                    ReentrantLock mapperLock = instanceRegionChecker.getAzToRegionMapper().getLock();
+                    mapperLock.lock();
+                    try {
                         if (remoteRegionsToFetch.compareAndSet(currentRemoteRegions, latestRemoteRegions)) {
                             String[] remoteRegions = latestRemoteRegions.split(",");
                             remoteRegionsRef.set(remoteRegions);
@@ -1543,6 +1572,8 @@ public class DiscoveryClient implements EurekaClient {
                             logger.info("Remote regions to fetch modified concurrently," +
                                     " ignoring change from {} to {}", currentRemoteRegions, latestRemoteRegions);
                         }
+                    } finally {
+                        mapperLock.unlock();
                     }
                 } else {
                     // Just refresh mapping to reflect any DNS/Property change

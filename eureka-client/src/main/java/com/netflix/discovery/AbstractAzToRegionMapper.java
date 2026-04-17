@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.google.common.base.Supplier;
 import com.google.common.collect.Multimap;
@@ -43,13 +44,41 @@ public abstract class AbstractAzToRegionMapper implements AzToRegionMapper {
     private final Map<String, String> parsedAzCache = new ConcurrentHashMap<String, String>();
     private String[] regionsToFetch;
 
+    /**
+     * Guards mutations to the mapping state. Previously the mutator methods
+     * were {@code synchronized} and external callers (e.g. {@code DiscoveryClient})
+     * also synchronized on this mapper instance; we expose an explicit
+     * {@link ReentrantLock} here so that virtual threads blocked waiting on
+     * this lock do not pin their carrier threads.
+     */
+    private final ReentrantLock lock = new ReentrantLock();
+
     protected AbstractAzToRegionMapper(EurekaClientConfig clientConfig) {
         this.clientConfig = clientConfig;
         populateDefaultAZToRegionMap();
     }
 
+    /**
+     * @return the lock that guards mutations to this mapper. Callers that
+     *         previously synchronized on the mapper object itself should use
+     *         this lock instead to preserve mutual exclusion while remaining
+     *         virtual-thread friendly.
+     */
+    public ReentrantLock getLock() {
+        return lock;
+    }
+
     @Override
-    public synchronized void setRegionsToFetch(String[] regionsToFetch) {
+    public void setRegionsToFetch(String[] regionsToFetch) {
+        lock.lock();
+        try {
+            doSetRegionsToFetch(regionsToFetch);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void doSetRegionsToFetch(String[] regionsToFetch) {
         if (null != regionsToFetch) {
             this.regionsToFetch = regionsToFetch;
             logger.info("Fetching availability zone to region mapping for regions {}", (Object) regionsToFetch);
@@ -113,9 +142,14 @@ public abstract class AbstractAzToRegionMapper implements AzToRegionMapper {
     }
 
     @Override
-    public synchronized void refreshMapping() {
-        logger.info("Refreshing availability zone to region mappings.");
-        setRegionsToFetch(regionsToFetch);
+    public void refreshMapping() {
+        lock.lock();
+        try {
+            logger.info("Refreshing availability zone to region mappings.");
+            doSetRegionsToFetch(regionsToFetch);
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**

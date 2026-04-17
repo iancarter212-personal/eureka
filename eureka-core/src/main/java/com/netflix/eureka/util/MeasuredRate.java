@@ -18,6 +18,7 @@ package com.netflix.eureka.util;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +36,15 @@ public class MeasuredRate {
     private final long sampleInterval;
     private final Timer timer;
 
+    /**
+     * Guards the {@link #start()} / {@link #stop()} lifecycle transitions.
+     * A {@link ReentrantLock} replaces the previous {@code synchronized}
+     * method modifiers so that callers running on virtual threads do not pin
+     * their carrier threads while the underlying {@link Timer} is scheduled
+     * or cancelled.
+     */
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
+
     private volatile boolean isActive;
 
     /**
@@ -46,29 +56,39 @@ public class MeasuredRate {
         this.isActive = false;
     }
 
-    public synchronized void start() {
-        if (!isActive) {
-            timer.schedule(new TimerTask() {
+    public void start() {
+        lifecycleLock.lock();
+        try {
+            if (!isActive) {
+                timer.schedule(new TimerTask() {
 
-                @Override
-                public void run() {
-                    try {
-                        // Zero out the current bucket.
-                        lastBucket.set(currentBucket.getAndSet(0));
-                    } catch (Throwable e) {
-                        logger.error("Cannot reset the Measured Rate", e);
+                    @Override
+                    public void run() {
+                        try {
+                            // Zero out the current bucket.
+                            lastBucket.set(currentBucket.getAndSet(0));
+                        } catch (Throwable e) {
+                            logger.error("Cannot reset the Measured Rate", e);
+                        }
                     }
-                }
-            }, sampleInterval, sampleInterval);
+                }, sampleInterval, sampleInterval);
 
-            isActive = true;
+                isActive = true;
+            }
+        } finally {
+            lifecycleLock.unlock();
         }
     }
 
-    public synchronized void stop() {
-        if (isActive) {
-            timer.cancel();
-            isActive = false;
+    public void stop() {
+        lifecycleLock.lock();
+        try {
+            if (isActive) {
+                timer.cancel();
+                isActive = false;
+            }
+        } finally {
+            lifecycleLock.unlock();
         }
     }
 

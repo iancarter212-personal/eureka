@@ -6,6 +6,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.netflix.appinfo.EurekaAccept;
 import com.netflix.discovery.converters.EurekaJacksonCodec;
@@ -33,6 +34,16 @@ public final class CodecWrappers {
     private static final Map<String, CodecWrapper> CODECS = new ConcurrentHashMap<>();
 
     /**
+     * Serializes lazy initialization of codec wrappers across the static
+     * {@link #getCodec(String)}, {@link #getEncoder(String)},
+     * {@link #getDecoder(String)} and {@link #resolveDecoder(String, String)}
+     * entry points. A {@link ReentrantLock} replaces the previous {@code static
+     * synchronized} modifiers so virtual threads that race on codec creation
+     * do not pin their carrier threads on the class-level intrinsic monitor.
+     */
+    private static final ReentrantLock CODECS_LOCK = new ReentrantLock();
+
+    /**
      * For transition use: register a new codec wrapper.
      */
     public static void registerWrapper(CodecWrapper wrapper) {
@@ -47,38 +58,48 @@ public final class CodecWrappers {
         return getCodec(getCodecName(clazz));
     }
 
-    public static synchronized CodecWrapper getCodec(String name) {
+    public static CodecWrapper getCodec(String name) {
         if (name == null) {
             return null;
         }
 
-        if (!CODECS.containsKey(name)) {
-            CodecWrapper wrapper = create(name);
-            if (wrapper != null) {
-                CODECS.put(wrapper.codecName(), wrapper);
+        CODECS_LOCK.lock();
+        try {
+            if (!CODECS.containsKey(name)) {
+                CodecWrapper wrapper = create(name);
+                if (wrapper != null) {
+                    CODECS.put(wrapper.codecName(), wrapper);
+                }
             }
-        }
 
-        return CODECS.get(name);
+            return CODECS.get(name);
+        } finally {
+            CODECS_LOCK.unlock();
+        }
     }
 
     public static <T extends EncoderWrapper> EncoderWrapper getEncoder(Class<T> clazz) {
         return getEncoder(getCodecName(clazz));
     }
 
-    public static synchronized EncoderWrapper getEncoder(String name) {
+    public static EncoderWrapper getEncoder(String name) {
         if (name == null) {
             return null;
         }
 
-        if (!CODECS.containsKey(name)) {
-            CodecWrapper wrapper = create(name);
-            if (wrapper != null) {
-                CODECS.put(wrapper.codecName(), wrapper);
+        CODECS_LOCK.lock();
+        try {
+            if (!CODECS.containsKey(name)) {
+                CodecWrapper wrapper = create(name);
+                if (wrapper != null) {
+                    CODECS.put(wrapper.codecName(), wrapper);
+                }
             }
-        }
 
-        return CODECS.get(name);
+            return CODECS.get(name);
+        } finally {
+            CODECS_LOCK.unlock();
+        }
     }
 
     public static <T extends DecoderWrapper> DecoderWrapper getDecoder(Class<T> clazz) {
@@ -90,30 +111,40 @@ public final class CodecWrappers {
      * The eurekAccept trumps the decoder name if the decoder specified is one that is not valid for use for the
      * specified eurekaAccept.
      */
-    public static synchronized DecoderWrapper resolveDecoder(String name, String eurekaAccept) {
-        EurekaAccept accept = EurekaAccept.fromString(eurekaAccept);
-        switch (accept) {
-            case compact:
-                return getDecoder(JacksonJsonMini.class);
-            case full:
-            default:
-                return getDecoder(name);
+    public static DecoderWrapper resolveDecoder(String name, String eurekaAccept) {
+        CODECS_LOCK.lock();
+        try {
+            EurekaAccept accept = EurekaAccept.fromString(eurekaAccept);
+            switch (accept) {
+                case compact:
+                    return getDecoder(JacksonJsonMini.class);
+                case full:
+                default:
+                    return getDecoder(name);
+            }
+        } finally {
+            CODECS_LOCK.unlock();
         }
     }
 
-    public static synchronized DecoderWrapper getDecoder(String name) {
+    public static DecoderWrapper getDecoder(String name) {
         if (name == null) {
             return null;
         }
 
-        if (!CODECS.containsKey(name)) {
-            CodecWrapper wrapper = create(name);
-            if (wrapper != null) {
-                CODECS.put(wrapper.codecName(), wrapper);
+        CODECS_LOCK.lock();
+        try {
+            if (!CODECS.containsKey(name)) {
+                CodecWrapper wrapper = create(name);
+                if (wrapper != null) {
+                    CODECS.put(wrapper.codecName(), wrapper);
+                }
             }
-        }
 
-        return CODECS.get(name);
+            return CODECS.get(name);
+        } finally {
+            CODECS_LOCK.unlock();
+        }
     }
 
     private static CodecWrapper create(String name) {

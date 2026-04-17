@@ -20,6 +20,7 @@ import javax.inject.Inject;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Collections;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.netflix.discovery.EurekaIdentityHeaderFilter;
 import com.netflix.discovery.shared.resolver.EurekaEndpoint;
@@ -48,7 +49,15 @@ public class JerseyRemoteRegionClientFactory implements TransportClientFactory {
     private final String region;
 
     private volatile EurekaJerseyClient jerseyClient;
-    private final Object lock = new Object();
+
+    /**
+     * Guards lazy initialization of {@link #jerseyClient} inside
+     * {@link #getOrCreateJerseyClient(String, EurekaEndpoint)}. A
+     * {@link ReentrantLock} replaces the previous intrinsic-monitor
+     * {@code Object lock} so that virtual threads contending on the first
+     * client build do not pin their carrier threads.
+     */
+    private final ReentrantLock lock = new ReentrantLock();
 
     @Inject
     public JerseyRemoteRegionClientFactory(EurekaServerConfig serverConfig,
@@ -76,7 +85,8 @@ public class JerseyRemoteRegionClientFactory implements TransportClientFactory {
             return jerseyClient;
         }
 
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (jerseyClient == null) {
                 EurekaJerseyClientBuilder clientBuilder = new EurekaJerseyClientBuilder()
                         .withUserAgent("Java-EurekaClient-RemoteRegion")
@@ -119,6 +129,8 @@ public class JerseyRemoteRegionClientFactory implements TransportClientFactory {
                 EurekaServerIdentity identity = new EurekaServerIdentity(ip);
                 discoveryApacheClient.addFilter(new EurekaIdentityHeaderFilter(identity));
             }
+        } finally {
+            lock.unlock();
         }
 
         return jerseyClient;

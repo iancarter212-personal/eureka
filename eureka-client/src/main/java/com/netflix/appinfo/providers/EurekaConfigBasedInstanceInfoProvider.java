@@ -3,6 +3,7 @@ package com.netflix.appinfo.providers;
 import javax.inject.Singleton;
 import javax.inject.Provider;
 import java.util.Map;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.google.inject.Inject;
 import com.netflix.appinfo.DataCenterInfo;
@@ -37,14 +38,24 @@ public class EurekaConfigBasedInstanceInfoProvider implements Provider<InstanceI
     @Inject(optional = true)
     private VipAddressResolver vipAddressResolver = null;
 
+    /**
+     * Guards lazy initialization of {@link #instanceInfo}. Replaces the
+     * previous {@code synchronized} modifier on {@link #get()} so that
+     * virtual threads racing on the first access do not pin their carrier
+     * threads while the underlying data center info is resolved.
+     */
+    private final ReentrantLock lock = new ReentrantLock();
+
     @Inject
     public EurekaConfigBasedInstanceInfoProvider(EurekaInstanceConfig config) {
         this.config = config;
     }
 
     @Override
-    public synchronized InstanceInfo get() {
-        if (instanceInfo == null) {
+    public InstanceInfo get() {
+        lock.lock();
+        try {
+            if (instanceInfo == null) {
             // Build the lease information to be passed to the server based on config
             LeaseInfo.Builder leaseInfoBuilder = LeaseInfo.Builder.newBuilder()
                     .setRenewalIntervalInSecs(config.getLeaseRenewalIntervalInSeconds())
@@ -122,10 +133,13 @@ public class EurekaConfigBasedInstanceInfoProvider implements Provider<InstanceI
                 }
             }
 
-            instanceInfo = builder.build();
-            instanceInfo.setLeaseInfo(leaseInfoBuilder.build());
+                instanceInfo = builder.build();
+                instanceInfo.setLeaseInfo(leaseInfoBuilder.build());
+            }
+            return instanceInfo;
+        } finally {
+            lock.unlock();
         }
-        return instanceInfo;
     }
 
 }

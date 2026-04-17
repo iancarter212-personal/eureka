@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * A holder class for AmazonInfo that exposes some APIs to allow for refreshes.
@@ -28,6 +29,15 @@ public class RefreshableAmazonInfoProvider implements Provider<AmazonInfo> {
 
     /* Visible for testing */ volatile AmazonInfo info;
     private final AmazonInfoConfig amazonInfoConfig;
+
+    /**
+     * Guards {@link #refresh()} so concurrent callers never interleave
+     * AWS metadata fetches. A {@link ReentrantLock} replaces the previous
+     * {@code synchronized} method modifier so virtual threads invoking
+     * refresh do not pin their carrier threads while the blocking
+     * metadata URL is read.
+     */
+    private final ReentrantLock refreshLock = new ReentrantLock();
 
     public RefreshableAmazonInfoProvider(AmazonInfoConfig amazonInfoConfig, FallbackAddressProvider fallbackAddressProvider) {
         this(init(amazonInfoConfig, fallbackAddressProvider), amazonInfoConfig);
@@ -79,17 +89,22 @@ public class RefreshableAmazonInfoProvider implements Provider<AmazonInfo> {
     /**
      * Refresh the locally held version of {@link com.netflix.appinfo.AmazonInfo}
      */
-    public synchronized void refresh() {
+    public void refresh() {
+        refreshLock.lock();
         try {
-            AmazonInfo newInfo = getNewAmazonInfo();
+            try {
+                AmazonInfo newInfo = getNewAmazonInfo();
 
-            if (shouldUpdate(newInfo, info)) {
-                // the datacenter info has changed, re-sync it
-                logger.info("The AmazonInfo changed from : {} => {}", info, newInfo);
-                this.info = newInfo;
+                if (shouldUpdate(newInfo, info)) {
+                    // the datacenter info has changed, re-sync it
+                    logger.info("The AmazonInfo changed from : {} => {}", info, newInfo);
+                    this.info = newInfo;
+                }
+            } catch (Throwable t) {
+                logger.error("Cannot refresh the Amazon Info ", t);
             }
-        } catch (Throwable t) {
-            logger.error("Cannot refresh the Amazon Info ", t);
+        } finally {
+            refreshLock.unlock();
         }
     }
 

@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.google.common.base.Supplier;
 import com.google.common.collect.Multimap;
@@ -43,50 +44,64 @@ public abstract class AbstractAzToRegionMapper implements AzToRegionMapper {
     private final Map<String, String> parsedAzCache = new ConcurrentHashMap<String, String>();
     private String[] regionsToFetch;
 
+    /**
+     * Guards mutations of {@link #regionsToFetch}, {@link #availabilityZoneVsRegion}
+     * and {@link #parsedAzCache} driven through {@link #setRegionsToFetch(String[])}
+     * and {@link #refreshMapping()}. A {@link ReentrantLock} replaces the previous
+     * {@code synchronized} method modifiers so that virtual threads contending on
+     * these mutations do not pin their carrier threads.
+     */
+    private final ReentrantLock mappingLock = new ReentrantLock();
+
     protected AbstractAzToRegionMapper(EurekaClientConfig clientConfig) {
         this.clientConfig = clientConfig;
         populateDefaultAZToRegionMap();
     }
 
     @Override
-    public synchronized void setRegionsToFetch(String[] regionsToFetch) {
-        if (null != regionsToFetch) {
-            this.regionsToFetch = regionsToFetch;
-            logger.info("Fetching availability zone to region mapping for regions {}", (Object) regionsToFetch);
-            availabilityZoneVsRegion.clear();
-            parsedAzCache.clear();
-            for (String remoteRegion : regionsToFetch) {
-                Set<String> availabilityZones = getZonesForARegion(remoteRegion);
-                if (null == availabilityZones
-                        || (availabilityZones.size() == 1 && availabilityZones.contains(DEFAULT_ZONE))
-                        || availabilityZones.isEmpty()) {
-                    logger.info("No availability zone information available for remote region: {}"
-                            + ". Now checking in the default mapping.", remoteRegion);
-                    if (defaultRegionVsAzMap.containsKey(remoteRegion)) {
-                        Collection<String> defaultAvailabilityZones = defaultRegionVsAzMap.get(remoteRegion);
-                        for (String defaultAvailabilityZone : defaultAvailabilityZones) {
-                            availabilityZoneVsRegion.put(defaultAvailabilityZone, remoteRegion);
+    public void setRegionsToFetch(String[] regionsToFetch) {
+        mappingLock.lock();
+        try {
+            if (null != regionsToFetch) {
+                this.regionsToFetch = regionsToFetch;
+                logger.info("Fetching availability zone to region mapping for regions {}", (Object) regionsToFetch);
+                availabilityZoneVsRegion.clear();
+                parsedAzCache.clear();
+                for (String remoteRegion : regionsToFetch) {
+                    Set<String> availabilityZones = getZonesForARegion(remoteRegion);
+                    if (null == availabilityZones
+                            || (availabilityZones.size() == 1 && availabilityZones.contains(DEFAULT_ZONE))
+                            || availabilityZones.isEmpty()) {
+                        logger.info("No availability zone information available for remote region: {}"
+                                + ". Now checking in the default mapping.", remoteRegion);
+                        if (defaultRegionVsAzMap.containsKey(remoteRegion)) {
+                            Collection<String> defaultAvailabilityZones = defaultRegionVsAzMap.get(remoteRegion);
+                            for (String defaultAvailabilityZone : defaultAvailabilityZones) {
+                                availabilityZoneVsRegion.put(defaultAvailabilityZone, remoteRegion);
+                            }
+                        } else {
+                            String msg = "No availability zone information available for remote region: " + remoteRegion
+                                    + ". This is required if registry information for this region is configured to be "
+                                    + "fetched.";
+                            logger.error(msg);
+                            throw new RuntimeException(msg);
                         }
                     } else {
-                        String msg = "No availability zone information available for remote region: " + remoteRegion
-                                + ". This is required if registry information for this region is configured to be "
-                                + "fetched.";
-                        logger.error(msg);
-                        throw new RuntimeException(msg);
-                    }
-                } else {
-                    for (String availabilityZone : availabilityZones) {
-                        availabilityZoneVsRegion.put(availabilityZone, remoteRegion);
+                        for (String availabilityZone : availabilityZones) {
+                            availabilityZoneVsRegion.put(availabilityZone, remoteRegion);
+                        }
                     }
                 }
-            }
 
-            logger.info("Availability zone to region mapping for all remote regions: {}", availabilityZoneVsRegion);
-        } else {
-            logger.info("Regions to fetch is null. Erasing older mapping if any.");
-            availabilityZoneVsRegion.clear();
-            parsedAzCache.clear();
-            this.regionsToFetch = EMPTY_STR_ARRAY;
+                logger.info("Availability zone to region mapping for all remote regions: {}", availabilityZoneVsRegion);
+            } else {
+                logger.info("Regions to fetch is null. Erasing older mapping if any.");
+                availabilityZoneVsRegion.clear();
+                parsedAzCache.clear();
+                this.regionsToFetch = EMPTY_STR_ARRAY;
+            }
+        } finally {
+            mappingLock.unlock();
         }
     }
 
@@ -113,9 +128,14 @@ public abstract class AbstractAzToRegionMapper implements AzToRegionMapper {
     }
 
     @Override
-    public synchronized void refreshMapping() {
-        logger.info("Refreshing availability zone to region mappings.");
-        setRegionsToFetch(regionsToFetch);
+    public void refreshMapping() {
+        mappingLock.lock();
+        try {
+            logger.info("Refreshing availability zone to region mappings.");
+            setRegionsToFetch(regionsToFetch);
+        } finally {
+            mappingLock.unlock();
+        }
     }
 
     /**

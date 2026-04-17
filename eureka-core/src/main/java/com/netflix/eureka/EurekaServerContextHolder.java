@@ -16,6 +16,8 @@
 
 package com.netflix.eureka;
 
+import java.util.concurrent.locks.ReentrantLock;
+
 /**
  * A static holder for the server context for use in non-DI cases.
  *
@@ -35,8 +37,21 @@ public class EurekaServerContextHolder {
 
     private static EurekaServerContextHolder holder;
 
-    public static synchronized void initialize(EurekaServerContext serverContext) {
-        holder = new EurekaServerContextHolder(serverContext);
+    /**
+     * Guards mutation of the static {@link #holder}. Replaces the previous
+     * {@code static synchronized} modifier on {@link #initialize(EurekaServerContext)}
+     * so virtual threads invoking initialize do not pin their carrier
+     * threads on the class-level intrinsic monitor.
+     */
+    private static final ReentrantLock LOCK = new ReentrantLock();
+
+    public static void initialize(EurekaServerContext serverContext) {
+        LOCK.lock();
+        try {
+            holder = new EurekaServerContextHolder(serverContext);
+        } finally {
+            LOCK.unlock();
+        }
     }
 
     public static EurekaServerContextHolder getInstance() {

@@ -197,6 +197,34 @@ public class DiscoveryClient implements EurekaClient {
 
     private final AtomicBoolean isShutdown = new AtomicBoolean(false);
 
+    /**
+     * Guards the one-time shutdown sequence. Replaces the previous
+     * {@code synchronized} modifier on {@link #shutdown()} so that virtual
+     * threads invoking shutdown during a blocking unregister/HTTP call do not
+     * pin their carrier threads.
+     */
+    private final ReentrantLock shutdownLock = new ReentrantLock();
+
+    /**
+     * Guards transitions of {@link #lastRemoteInstanceStatus}. Replaces the
+     * previous {@code synchronized} modifier on
+     * {@link #updateInstanceRemoteStatus()} so virtual threads running the
+     * cache-refresh task do not pin their carrier threads while event
+     * listeners are fired.
+     */
+    private final ReentrantLock remoteStatusLock = new ReentrantLock();
+
+    /**
+     * Guards the combined {@code remoteRegionsToFetch} compareAndSet +
+     * {@code setRegionsToFetch} dance inside {@link #refreshRegistry()}. The
+     * previous implementation acquired the intrinsic monitor of the
+     * {@link AzToRegionMapper} instance; we use a dedicated
+     * {@link ReentrantLock} so that virtual threads never pin on an intrinsic
+     * monitor. {@link AbstractAzToRegionMapper} itself also uses a
+     * {@link ReentrantLock} internally for its own mutations.
+     */
+    private final ReentrantLock azToRegionMapperLock = new ReentrantLock();
+
     protected final EurekaClientConfig clientConfig;
     protected final EurekaTransportConfig transportConfig;
 
@@ -293,31 +321,37 @@ public class DiscoveryClient implements EurekaClient {
     public DiscoveryClient(ApplicationInfoManager applicationInfoManager, final EurekaClientConfig config, AbstractDiscoveryClientOptionalArgs args, EndpointRandomizer randomizer) {
         this(applicationInfoManager, config, args, new Provider<BackupRegistry>() {
             private volatile BackupRegistry backupRegistryInstance;
+            private final ReentrantLock backupRegistryLock = new ReentrantLock();
 
             @Override
-            public synchronized BackupRegistry get() {
-                if (backupRegistryInstance == null) {
-                    String backupRegistryClassName = config.getBackupRegistryImpl();
-                    if (null != backupRegistryClassName) {
-                        try {
-                            backupRegistryInstance = (BackupRegistry) Class.forName(backupRegistryClassName).newInstance();
-                            logger.info("Enabled backup registry of type {}", backupRegistryInstance.getClass());
-                        } catch (InstantiationException e) {
-                            logger.error("Error instantiating BackupRegistry.", e);
-                        } catch (IllegalAccessException e) {
-                            logger.error("Error instantiating BackupRegistry.", e);
-                        } catch (ClassNotFoundException e) {
-                            logger.error("Error instantiating BackupRegistry.", e);
+            public BackupRegistry get() {
+                backupRegistryLock.lock();
+                try {
+                    if (backupRegistryInstance == null) {
+                        String backupRegistryClassName = config.getBackupRegistryImpl();
+                        if (null != backupRegistryClassName) {
+                            try {
+                                backupRegistryInstance = (BackupRegistry) Class.forName(backupRegistryClassName).newInstance();
+                                logger.info("Enabled backup registry of type {}", backupRegistryInstance.getClass());
+                            } catch (InstantiationException e) {
+                                logger.error("Error instantiating BackupRegistry.", e);
+                            } catch (IllegalAccessException e) {
+                                logger.error("Error instantiating BackupRegistry.", e);
+                            } catch (ClassNotFoundException e) {
+                                logger.error("Error instantiating BackupRegistry.", e);
+                            }
+                        }
+
+                        if (backupRegistryInstance == null) {
+                            logger.warn("Using default backup registry implementation which does not do anything.");
+                            backupRegistryInstance = new NotImplementedRegistryImpl();
                         }
                     }
 
-                    if (backupRegistryInstance == null) {
-                        logger.warn("Using default backup registry implementation which does not do anything.");
-                        backupRegistryInstance = new NotImplementedRegistryImpl();
-                    }
+                    return backupRegistryInstance;
+                } finally {
+                    backupRegistryLock.unlock();
                 }
-
-                return backupRegistryInstance;
             }
         }, randomizer);
     }
@@ -952,34 +986,39 @@ public class DiscoveryClient implements EurekaClient {
      */
     @PreDestroy
     @Override
-    public synchronized void shutdown() {
-        if (isShutdown.compareAndSet(false, true)) {
-            logger.info("Shutting down DiscoveryClient ...");
+    public void shutdown() {
+        shutdownLock.lock();
+        try {
+            if (isShutdown.compareAndSet(false, true)) {
+                logger.info("Shutting down DiscoveryClient ...");
 
-            if (statusChangeListener != null && applicationInfoManager != null) {
-                applicationInfoManager.unregisterStatusChangeListener(statusChangeListener.getId());
+                if (statusChangeListener != null && applicationInfoManager != null) {
+                    applicationInfoManager.unregisterStatusChangeListener(statusChangeListener.getId());
+                }
+
+                cancelScheduledTasks();
+
+                // If APPINFO was registered
+                if (applicationInfoManager != null
+                        && clientConfig.shouldRegisterWithEureka()
+                        && clientConfig.shouldUnregisterOnShutdown()) {
+                    applicationInfoManager.setInstanceStatus(InstanceStatus.DOWN);
+                    unregister();
+                }
+
+                if (eurekaTransport != null) {
+                    eurekaTransport.shutdown();
+                }
+
+                heartbeatStalenessMonitor.shutdown();
+                registryStalenessMonitor.shutdown();
+
+                Monitors.unregisterObject(this);
+
+                logger.info("Completed shut down of DiscoveryClient");
             }
-
-            cancelScheduledTasks();
-
-            // If APPINFO was registered
-            if (applicationInfoManager != null
-                    && clientConfig.shouldRegisterWithEureka()
-                    && clientConfig.shouldUnregisterOnShutdown()) {
-                applicationInfoManager.setInstanceStatus(InstanceStatus.DOWN);
-                unregister();
-            }
-
-            if (eurekaTransport != null) {
-                eurekaTransport.shutdown();
-            }
-
-            heartbeatStalenessMonitor.shutdown();
-            registryStalenessMonitor.shutdown();
-
-            Monitors.unregisterObject(this);
-
-            logger.info("Completed shut down of DiscoveryClient");
+        } finally {
+            shutdownLock.unlock();
         }
     }
 
@@ -1059,26 +1098,31 @@ public class DiscoveryClient implements EurekaClient {
         return true;
     }
 
-    private synchronized void updateInstanceRemoteStatus() {
-        // Determine this instance's status for this app and set to UNKNOWN if not found
-        InstanceInfo.InstanceStatus currentRemoteInstanceStatus = null;
-        if (instanceInfo.getAppName() != null) {
-            Application app = getApplication(instanceInfo.getAppName());
-            if (app != null) {
-                InstanceInfo remoteInstanceInfo = app.getByInstanceId(instanceInfo.getId());
-                if (remoteInstanceInfo != null) {
-                    currentRemoteInstanceStatus = remoteInstanceInfo.getStatus();
+    private void updateInstanceRemoteStatus() {
+        remoteStatusLock.lock();
+        try {
+            // Determine this instance's status for this app and set to UNKNOWN if not found
+            InstanceInfo.InstanceStatus currentRemoteInstanceStatus = null;
+            if (instanceInfo.getAppName() != null) {
+                Application app = getApplication(instanceInfo.getAppName());
+                if (app != null) {
+                    InstanceInfo remoteInstanceInfo = app.getByInstanceId(instanceInfo.getId());
+                    if (remoteInstanceInfo != null) {
+                        currentRemoteInstanceStatus = remoteInstanceInfo.getStatus();
+                    }
                 }
             }
-        }
-        if (currentRemoteInstanceStatus == null) {
-            currentRemoteInstanceStatus = InstanceInfo.InstanceStatus.UNKNOWN;
-        }
+            if (currentRemoteInstanceStatus == null) {
+                currentRemoteInstanceStatus = InstanceInfo.InstanceStatus.UNKNOWN;
+            }
 
-        // Notify if status changed
-        if (lastRemoteInstanceStatus != currentRemoteInstanceStatus) {
-            onRemoteStatusChanged(lastRemoteInstanceStatus, currentRemoteInstanceStatus);
-            lastRemoteInstanceStatus = currentRemoteInstanceStatus;
+            // Notify if status changed
+            if (lastRemoteInstanceStatus != currentRemoteInstanceStatus) {
+                onRemoteStatusChanged(lastRemoteInstanceStatus, currentRemoteInstanceStatus);
+                lastRemoteInstanceStatus = currentRemoteInstanceStatus;
+            }
+        } finally {
+            remoteStatusLock.unlock();
         }
     }
 
@@ -1532,8 +1576,12 @@ public class DiscoveryClient implements EurekaClient {
             if (null != latestRemoteRegions) {
                 String currentRemoteRegions = remoteRegionsToFetch.get();
                 if (!latestRemoteRegions.equals(currentRemoteRegions)) {
-                    // Both remoteRegionsToFetch and AzToRegionMapper.regionsToFetch need to be in sync
-                    synchronized (instanceRegionChecker.getAzToRegionMapper()) {
+                    // Both remoteRegionsToFetch and AzToRegionMapper.regionsToFetch need to be in sync.
+                    // AbstractAzToRegionMapper uses a ReentrantLock internally for its own mutations; here we
+                    // additionally serialize the combined compareAndSet + setRegionsToFetch across cache-refresh
+                    // threads using a dedicated ReentrantLock so virtual threads never pin on an intrinsic monitor.
+                    azToRegionMapperLock.lock();
+                    try {
                         if (remoteRegionsToFetch.compareAndSet(currentRemoteRegions, latestRemoteRegions)) {
                             String[] remoteRegions = latestRemoteRegions.split(",");
                             remoteRegionsRef.set(remoteRegions);
@@ -1543,6 +1591,8 @@ public class DiscoveryClient implements EurekaClient {
                             logger.info("Remote regions to fetch modified concurrently," +
                                     " ignoring change from {} to {}", currentRemoteRegions, latestRemoteRegions);
                         }
+                    } finally {
+                        azToRegionMapperLock.unlock();
                     }
                 } else {
                     // Just refresh mapping to reflect any DNS/Property change

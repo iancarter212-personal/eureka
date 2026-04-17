@@ -24,6 +24,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.inject.Singleton;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * An {@link InstanceInfo} configuration for AWS cloud deployments.
@@ -50,6 +51,14 @@ public class CloudInstanceConfig extends PropertiesInstanceConfig implements Ref
     };
 
     private final RefreshableAmazonInfoProvider amazonInfoHolder;
+
+    /**
+     * Guards the deprecated {@link #refreshAmazonInfo()} entry point. A
+     * {@link ReentrantLock} replaces the previous {@code synchronized} method
+     * modifier so that callers running on virtual threads do not pin their
+     * carrier threads while the underlying AWS metadata is refreshed.
+     */
+    private final ReentrantLock refreshLock = new ReentrantLock();
 
     public CloudInstanceConfig() {
         this(CommonConstants.DEFAULT_CONFIG_NAMESPACE);
@@ -164,8 +173,13 @@ public class CloudInstanceConfig extends PropertiesInstanceConfig implements Ref
      * as a public ip can change whenever an EIP is associated or dissociated.
      */
     @Deprecated
-    public synchronized void refreshAmazonInfo() {
-        amazonInfoHolder.refresh();
+    public void refreshAmazonInfo() {
+        refreshLock.lock();
+        try {
+            amazonInfoHolder.refresh();
+        } finally {
+            refreshLock.unlock();
+        }
     }
 
     /**

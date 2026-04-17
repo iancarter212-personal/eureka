@@ -4,6 +4,8 @@ import javax.inject.Inject;
 import javax.inject.Provider;
 import javax.inject.Singleton;
 
+import java.util.concurrent.locks.ReentrantLock;
+
 import com.netflix.discovery.CommonConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +33,14 @@ public class Ec2EurekaArchaius2InstanceConfig extends EurekaArchaius2InstanceCon
 
     private final AmazonInfoConfig amazonInfoConfig;
     private final Provider<AmazonInfo> amazonInfoHolder;
+
+    /**
+     * Guards the deprecated {@link #refreshAmazonInfo()} entry point. A
+     * {@link ReentrantLock} replaces the previous {@code synchronized} method
+     * modifier so that callers running on virtual threads do not pin their
+     * carrier threads while the underlying AWS metadata is refreshed.
+     */
+    private final ReentrantLock refreshLock = new ReentrantLock();
 
     @Inject
     public Ec2EurekaArchaius2InstanceConfig(Config configInstance, AmazonInfoConfig amazonInfoConfig) {
@@ -110,9 +120,14 @@ public class Ec2EurekaArchaius2InstanceConfig extends EurekaArchaius2InstanceCon
      * as a public ip can change whenever an EIP is associated or dissociated.
      */
     @Deprecated
-    public synchronized void refreshAmazonInfo() {
-        if (this.amazonInfoHolder instanceof RefreshableAmazonInfoProvider) {
-            ((RefreshableAmazonInfoProvider)amazonInfoHolder).refresh();
+    public void refreshAmazonInfo() {
+        refreshLock.lock();
+        try {
+            if (this.amazonInfoHolder instanceof RefreshableAmazonInfoProvider) {
+                ((RefreshableAmazonInfoProvider)amazonInfoHolder).refresh();
+            }
+        } finally {
+            refreshLock.unlock();
         }
     }
 

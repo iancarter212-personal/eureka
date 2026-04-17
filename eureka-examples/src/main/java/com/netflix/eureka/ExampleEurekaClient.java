@@ -23,6 +23,7 @@ import java.io.PrintStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.Date;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.netflix.appinfo.ApplicationInfoManager;
 import com.netflix.appinfo.EurekaInstanceConfig;
@@ -46,21 +47,39 @@ public class ExampleEurekaClient {
     private static ApplicationInfoManager applicationInfoManager;
     private static EurekaClient eurekaClient;
 
-    private static synchronized ApplicationInfoManager initializeApplicationInfoManager(EurekaInstanceConfig instanceConfig) {
-        if (applicationInfoManager == null) {
-            InstanceInfo instanceInfo = new EurekaConfigBasedInstanceInfoProvider(instanceConfig).get();
-            applicationInfoManager = new ApplicationInfoManager(instanceConfig, instanceInfo);
-        }
+    /**
+     * Guards lazy initialization of the static {@link #applicationInfoManager}
+     * and {@link #eurekaClient} fields. Replaces the previous
+     * {@code static synchronized} method modifiers so virtual threads do not
+     * pin their carrier threads on the class-level intrinsic monitor.
+     */
+    private static final ReentrantLock LOCK = new ReentrantLock();
 
-        return applicationInfoManager;
+    private static ApplicationInfoManager initializeApplicationInfoManager(EurekaInstanceConfig instanceConfig) {
+        LOCK.lock();
+        try {
+            if (applicationInfoManager == null) {
+                InstanceInfo instanceInfo = new EurekaConfigBasedInstanceInfoProvider(instanceConfig).get();
+                applicationInfoManager = new ApplicationInfoManager(instanceConfig, instanceInfo);
+            }
+
+            return applicationInfoManager;
+        } finally {
+            LOCK.unlock();
+        }
     }
 
-    private static synchronized EurekaClient initializeEurekaClient(ApplicationInfoManager applicationInfoManager, EurekaClientConfig clientConfig) {
-        if (eurekaClient == null) {
-            eurekaClient = new DiscoveryClient(applicationInfoManager, clientConfig);
-        }
+    private static EurekaClient initializeEurekaClient(ApplicationInfoManager applicationInfoManager, EurekaClientConfig clientConfig) {
+        LOCK.lock();
+        try {
+            if (eurekaClient == null) {
+                eurekaClient = new DiscoveryClient(applicationInfoManager, clientConfig);
+            }
 
-        return eurekaClient;
+            return eurekaClient;
+        } finally {
+            LOCK.unlock();
+        }
     }
 
 

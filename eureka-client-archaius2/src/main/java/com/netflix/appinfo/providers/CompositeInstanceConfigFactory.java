@@ -19,6 +19,7 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import java.net.SocketTimeoutException;
 import java.net.URL;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * A factory for {@link com.netflix.appinfo.EurekaInstanceConfig} that can provide either
@@ -55,6 +56,15 @@ public class CompositeInstanceConfigFactory implements EurekaInstanceConfigFacto
 
     private EurekaInstanceConfig eurekaInstanceConfig;
 
+    /**
+     * Guards lazy initialization of {@link #eurekaInstanceConfig} from the
+     * {@link #get()} entry point. A {@link ReentrantLock} replaces the
+     * previous {@code synchronized} method modifier so that virtual threads
+     * racing on the first access do not pin their carrier threads while the
+     * underlying EC2 auto-detection probe runs.
+     */
+    private final ReentrantLock lock = new ReentrantLock();
+
     @Inject
     public CompositeInstanceConfigFactory(Config configInstance, String namespace) {
         this.configInstance = configInstance;
@@ -63,24 +73,29 @@ public class CompositeInstanceConfigFactory implements EurekaInstanceConfigFacto
     }
 
     @Override
-    public synchronized EurekaInstanceConfig get() {
-        if (eurekaInstanceConfig == null) {
-            // create the amazonInfoConfig before we can determine if we are in EC2, as we want to use the amazonInfoConfig for
-            // that determination. This is just the config however so is cheap to do and does not have side effects.
-            AmazonInfoConfig amazonInfoConfig = new Archaius2AmazonInfoConfig(configInstance, namespace);
-            if (isInEc2(amazonInfoConfig)) {
-                eurekaInstanceConfig = new Ec2EurekaArchaius2InstanceConfig(configInstance, amazonInfoConfig, namespace);
-                logger.info("Creating EC2 specific instance config");
-            } else {
-                eurekaInstanceConfig = new EurekaArchaius2InstanceConfig(configInstance, namespace);
-                logger.info("Creating generic instance config");
+    public EurekaInstanceConfig get() {
+        lock.lock();
+        try {
+            if (eurekaInstanceConfig == null) {
+                // create the amazonInfoConfig before we can determine if we are in EC2, as we want to use the amazonInfoConfig for
+                // that determination. This is just the config however so is cheap to do and does not have side effects.
+                AmazonInfoConfig amazonInfoConfig = new Archaius2AmazonInfoConfig(configInstance, namespace);
+                if (isInEc2(amazonInfoConfig)) {
+                    eurekaInstanceConfig = new Ec2EurekaArchaius2InstanceConfig(configInstance, amazonInfoConfig, namespace);
+                    logger.info("Creating EC2 specific instance config");
+                } else {
+                    eurekaInstanceConfig = new EurekaArchaius2InstanceConfig(configInstance, namespace);
+                    logger.info("Creating generic instance config");
+                }
+
+                // TODO: Remove this when DiscoveryManager is finally no longer used
+                DiscoveryManager.getInstance().setEurekaInstanceConfig(eurekaInstanceConfig);
             }
 
-            // TODO: Remove this when DiscoveryManager is finally no longer used
-            DiscoveryManager.getInstance().setEurekaInstanceConfig(eurekaInstanceConfig);
+            return eurekaInstanceConfig;
+        } finally {
+            lock.unlock();
         }
-
-        return eurekaInstanceConfig;
     }
 
 

@@ -22,6 +22,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
@@ -87,6 +88,16 @@ public class InstanceInfo {
     public static final int DEFAULT_PORT = 7001;
     public static final int DEFAULT_SECURE_PORT = 7002;
     public static final int DEFAULT_COUNTRY_ID = 1; // US
+
+    /**
+     * Guards mutable state updates (status, overridden status, dirty flag, and
+     * runtime metadata). Replaces the previous {@code synchronized} method
+     * modifiers so that virtual threads contending for these state transitions
+     * do not pin their carrier threads.
+     */
+    @XStreamOmitField
+    @JsonIgnore
+    private final transient ReentrantLock lock = new ReentrantLock();
 
     // The (fixed) instanceId for this instanceInfo. This should be unique within the scope of the appName.
     private volatile String instanceId;
@@ -1165,14 +1176,19 @@ public class InstanceInfo {
      * @param status status for this instance.
      * @return the prev status if a different status from the current was set, null otherwise
      */
-    public synchronized InstanceStatus setStatus(InstanceStatus status) {
-        if (this.status != status) {
-            InstanceStatus prev = this.status;
-            this.status = status;
-            setIsDirty();
-            return prev;
+    public InstanceStatus setStatus(InstanceStatus status) {
+        lock.lock();
+        try {
+            if (this.status != status) {
+                InstanceStatus prev = this.status;
+                this.status = status;
+                setIsDirty();
+                return prev;
+            }
+            return null;
+        } finally {
+            lock.unlock();
         }
-        return null;
     }
 
     /**
@@ -1180,9 +1196,14 @@ public class InstanceInfo {
      *
      * @param status status for this instance.
      */
-    public synchronized void setStatusWithoutDirty(InstanceStatus status) {
-        if (this.status != status) {
-            this.status = status;
+    public void setStatusWithoutDirty(InstanceStatus status) {
+        lock.lock();
+        try {
+            if (this.status != status) {
+                this.status = status;
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -1192,9 +1213,14 @@ public class InstanceInfo {
      *
      * @param status overridden status for this instance.
      */
-    public synchronized void setOverriddenStatus(InstanceStatus status) {
-        if (this.overriddenStatus != status) {
-            this.overriddenStatus = status;
+    public void setOverriddenStatus(InstanceStatus status) {
+        lock.lock();
+        try {
+            if (this.overriddenStatus != status) {
+                this.overriddenStatus = status;
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -1212,11 +1238,16 @@ public class InstanceInfo {
     /**
      * @return the lastDirtyTimestamp if is dirty, null otherwise.
      */
-    public synchronized Long isDirtyWithTime() {
-        if (isInstanceInfoDirty) {
-            return lastDirtyTimestamp;
-        } else {
-            return null;
+    public Long isDirtyWithTime() {
+        lock.lock();
+        try {
+            if (isInstanceInfoDirty) {
+                return lastDirtyTimestamp;
+            } else {
+                return null;
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -1228,12 +1259,17 @@ public class InstanceInfo {
      * the discovery server on the next heartbeat.
      */
     @Deprecated
-    public synchronized void setIsDirty(boolean isDirty) {
-        if (isDirty) {
-            setIsDirty();
-        } else {
-            isInstanceInfoDirty = false;
-            // else don't update lastDirtyTimestamp as we are setting isDirty to false
+    public void setIsDirty(boolean isDirty) {
+        lock.lock();
+        try {
+            if (isDirty) {
+                setIsDirty();
+            } else {
+                isInstanceInfoDirty = false;
+                // else don't update lastDirtyTimestamp as we are setting isDirty to false
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -1241,9 +1277,14 @@ public class InstanceInfo {
      * Sets the dirty flag so that the instance information can be carried to
      * the discovery server on the next heartbeat.
      */
-    public synchronized void setIsDirty() {
-        isInstanceInfoDirty = true;
-        lastDirtyTimestamp = System.currentTimeMillis();
+    public void setIsDirty() {
+        lock.lock();
+        try {
+            isInstanceInfoDirty = true;
+            lastDirtyTimestamp = System.currentTimeMillis();
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -1251,9 +1292,14 @@ public class InstanceInfo {
      *
      * @return the timestamp when the isDirty flag is set
      */
-    public synchronized long setIsDirtyWithTime() {
-        setIsDirty();
-        return lastDirtyTimestamp;
+    public long setIsDirtyWithTime() {
+        lock.lock();
+        try {
+            setIsDirty();
+            return lastDirtyTimestamp;
+        } finally {
+            lock.unlock();
+        }
     }
 
 
@@ -1263,10 +1309,15 @@ public class InstanceInfo {
      *
      * @param unsetDirtyTimestamp the expected lastDirtyTimestamp to unset.
      */
-    public synchronized void unsetIsDirty(long unsetDirtyTimestamp) {
-        if (lastDirtyTimestamp <= unsetDirtyTimestamp) {
-            isInstanceInfoDirty = false;
-        } else {
+    public void unsetIsDirty(long unsetDirtyTimestamp) {
+        lock.lock();
+        try {
+            if (lastDirtyTimestamp <= unsetDirtyTimestamp) {
+                isInstanceInfoDirty = false;
+            } else {
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -1353,10 +1404,15 @@ public class InstanceInfo {
      * @param runtimeMetadata
      *            Map containing key/value pairs.
      */
-    synchronized void registerRuntimeMetadata(
+    void registerRuntimeMetadata(
             Map<String, String> runtimeMetadata) {
-        metadata.putAll(runtimeMetadata);
-        setIsDirty();
+        lock.lock();
+        try {
+            metadata.putAll(runtimeMetadata);
+            setIsDirty();
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**

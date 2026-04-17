@@ -167,7 +167,7 @@ public class ResponseCacheImpl implements ResponseCache {
             long now = System.currentTimeMillis();
             long initialDelayMs = (((now / responseCacheUpdateIntervalMs) * responseCacheUpdateIntervalMs)
                     + responseCacheUpdateIntervalMs) - now;
-            timer.scheduleAtFixedRate(getCacheUpdateTask(),
+            timer.scheduleWithFixedDelay(getCacheUpdateTask(),
                     initialDelayMs,
                     responseCacheUpdateIntervalMs,
                     TimeUnit.MILLISECONDS);

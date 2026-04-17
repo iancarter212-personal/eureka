@@ -151,7 +151,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
 
         this.renewsLastMin = new MeasuredRate(1000 * 60 * 1);
 
-        this.deltaRetentionTimer.scheduleAtFixedRate(getDeltaRetentionTask(),
+        this.deltaRetentionTimer.scheduleWithFixedDelay(getDeltaRetentionTask(),
                 serverConfig.getDeltaRetentionTimerIntervalInMs(),
                 serverConfig.getDeltaRetentionTimerIntervalInMs(),
                 TimeUnit.MILLISECONDS);
@@ -1259,7 +1259,7 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
         EvictionTask newTask = new EvictionTask();
         evictionTaskRef.set(newTask);
         newTask.setScheduledFuture(
-                evictionTimer.scheduleAtFixedRate(newTask,
+                evictionTimer.scheduleWithFixedDelay(newTask,
                         serverConfig.getEvictionIntervalTimerInMs(),
                         serverConfig.getEvictionIntervalTimerInMs(),
                         TimeUnit.MILLISECONDS));

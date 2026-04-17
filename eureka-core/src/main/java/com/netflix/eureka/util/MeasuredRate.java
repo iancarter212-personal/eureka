@@ -73,7 +73,7 @@ public class MeasuredRate {
         lock.lock();
         try {
             if (!isActive) {
-                scheduledTask = executor.scheduleAtFixedRate(() -> {
+                scheduledTask = executor.scheduleWithFixedDelay(() -> {
                     try {
                         // Zero out the current bucket.
                         lastBucket.set(currentBucket.getAndSet(0));

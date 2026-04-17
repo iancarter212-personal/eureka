@@ -84,9 +84,28 @@ public class Application {
      * {@link ReentrantLock} instead so that virtual threads blocked waiting on
      * this lock do not pin their carrier threads, consistent with the approach
      * in {@code AbstractInstanceRegistry}.
+     *
+     * <p>The field is not {@code final} because deserializers such as XStream
+     * bypass constructors and field initializers, so the lock is initialized
+     * lazily via {@link #instancesLock()} when needed.</p>
      */
     @XStreamOmitField
-    private final transient ReentrantLock instancesLock = new ReentrantLock();
+    @JsonIgnore
+    private transient volatile ReentrantLock instancesLock = new ReentrantLock();
+
+    private ReentrantLock instancesLock() {
+        ReentrantLock l = instancesLock;
+        if (l == null) {
+            synchronized (this) {
+                l = instancesLock;
+                if (l == null) {
+                    l = new ReentrantLock();
+                    instancesLock = l;
+                }
+            }
+        }
+        return l;
+    }
 
     public Application() {
         instances = new LinkedHashSet<InstanceInfo>();
@@ -117,13 +136,13 @@ public class Application {
      */
     public void addInstance(InstanceInfo i) {
         instancesMap.put(i.getId(), i);
-        instancesLock.lock();
+        instancesLock().lock();
         try {
             instances.remove(i);
             instances.add(i);
             isDirty = true;
         } finally {
-            instancesLock.unlock();
+            instancesLock().unlock();
         }
     }
 
@@ -166,11 +185,11 @@ public class Application {
      */
     @JsonIgnore
     public List<InstanceInfo> getInstancesAsIsFromEureka() {
-        instancesLock.lock();
+        instancesLock().lock();
         try {
             return new ArrayList<InstanceInfo>(this.instances);
         } finally {
-            instancesLock.unlock();
+            instancesLock().unlock();
         }
     }
 
@@ -180,13 +199,13 @@ public class Application {
      * Callers should be sure that this is a quick iteration.
      */
     void forEachInstance(Consumer<InstanceInfo> consumer) {
-        instancesLock.lock();
+        instancesLock().lock();
         try {
             for (InstanceInfo info : instances) {
                 consumer.accept(info);
             }
         } finally {
-            instancesLock.unlock();
+            instancesLock().unlock();
         }
     }
 
@@ -250,11 +269,11 @@ public class Application {
                                            @Nullable EurekaClientConfig clientConfig,
                                            @Nullable InstanceRegionChecker instanceRegionChecker) {
         List<InstanceInfo> instanceInfoList;
-        instancesLock.lock();
+        instancesLock().lock();
         try {
             instanceInfoList = new ArrayList<InstanceInfo>(instances);
         } finally {
-            instancesLock.unlock();
+            instancesLock().unlock();
         }
         boolean remoteIndexingActive = indexByRemoteRegions && null != instanceRegionChecker && null != clientConfig
                 && null != remoteRegionsRegistry;
@@ -294,14 +313,14 @@ public class Application {
 
     private void removeInstance(InstanceInfo i, boolean markAsDirty) {
         instancesMap.remove(i.getId());
-        instancesLock.lock();
+        instancesLock().lock();
         try {
             instances.remove(i);
             if (markAsDirty) {
                 isDirty = true;
             }
         } finally {
-            instancesLock.unlock();
+            instancesLock().unlock();
         }
     }
 }

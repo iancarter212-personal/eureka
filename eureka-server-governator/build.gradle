@@ -9,7 +9,7 @@ dependencies {
     api "com.sun.jersey:jersey-server:${jerseyVersion}"
     api "com.sun.jersey:jersey-servlet:${jerseyVersion}"
     api "com.sun.jersey.contribs:jersey-guice:${jerseyVersion}"
-    api 'org.slf4j:slf4j-log4j12:1.7.36'
+    api "org.slf4j:slf4j-reload4j:${slf4jVersion}"
     runtimeOnly "org.codehaus.jettison:jettison:${jettisonVersion}"
     compileOnly "javax.servlet:javax.servlet-api:${servletVersion}"
 
@@ -40,7 +40,5 @@ gretty {
         '--add-opens', 'java.base/java.io=ALL-UNNAMED',
         '--add-opens', 'java.base/java.math=ALL-UNNAMED',
         '--add-opens', 'java.base/java.text=ALL-UNNAMED',
-        '--add-opens', 'java.base/sun.security.ssl=ALL-UNNAMED',
-        '--add-opens', 'java.base/sun.net.www.protocol.https=ALL-UNNAMED',
     ]
 }

@@ -7,9 +7,9 @@ configurations.all {
 dependencies {
     api project(':eureka-core')
     api project(':eureka-client-jersey2')
-    api 'org.glassfish.jersey.core:jersey-client:2.41'
-    api 'org.glassfish.jersey.connectors:jersey-apache-connector:2.41'
-    api 'org.glassfish.jersey.inject:jersey-hk2:2.41'
+    api "org.glassfish.jersey.core:jersey-client:${jersey2Version}"
+    api "org.glassfish.jersey.connectors:jersey-apache-connector:${jersey2Version}"
+    api "org.glassfish.jersey.inject:jersey-hk2:${jersey2Version}"
 
     testImplementation (project(':eureka-test-utils')) {
         // exclude all transitives to avoid bringing in jersey1 eureka-core
